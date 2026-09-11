@@ -153,6 +153,23 @@ export const PLAYER_SOURCES = [
       `https://www.vidking.net/embed/tv/${id}/${season}/${ep}`,
   },
   {
+    id: "peachify",
+    label: "Peachify",
+    tag: null,
+    note: "Movies only",
+    supportsProgress: true,
+    colorParam: "accent", // hex without # → e.g. "e50914"
+    langParam: "sub",
+    params: {
+      autoPlay: "true",
+      pip: "hide",
+      cast: "hide",
+    },
+    movieUrl: (id) => `https://peachify.top/embed/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://peachify.top/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
     id: "allmanga",
     label: "AllManga",
     tag: "ANIME",
