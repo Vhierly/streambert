@@ -124,21 +124,6 @@ export const tmdbFetch = async (path, apiKey) => {
 // supportsProgress: true = executeJavaScript tracking works for this source
 export const PLAYER_SOURCES = [
   {
-    id: "videasy",
-    label: "Videasy",
-    tag: null,
-    note: null,
-    supportsProgress: true,
-    colorParam: "color", // hex without # → e.g. "e50914"
-    langParam: null, // no subtitle lang param
-    params: {
-      overlay: "true",
-    },
-    movieUrl: (id) => `https://player.videasy.to/movie/${id}`,
-    tvUrl: (id, season, ep) =>
-      `https://player.videasy.to/tv/${id}/${season}/${ep}`,
-  },
-  {
     id: "vidsrc",
     label: "VidSrc",
     tag: null,
