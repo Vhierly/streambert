@@ -73,7 +73,7 @@ const BLOCKED_HOSTS = [
   "*://b7510.com/*",
   "*://gt.unbrownunflat.com/*",
   "*://im.malocacomals.com/*",
-  "*://users.videasy.net/*",
+  // NOTE: users.videasy.net removed — required for Videasy player auth/embed
   "*://nf.sixmossin.com/*",
   "*://realizationnewestfangs.com/*",
   "*://acscdn.com/*",
