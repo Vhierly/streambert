@@ -328,12 +328,23 @@ export default function MoviePage({
     };
   }, [item.id, isAnime]);
 
-  // Resolve AllManga movie URL via main-process IPC
+  // Resolve anime movie URL via main-process IPC (AllManga or Enma)
   useEffect(() => {
     if (!playing) return;
     const epKey = `movie_${item.id}_${dubMode}`;
 
-    // Auto-failover: if a previous attempt taught us AllManga doesn't have
+    // Only AllManga and Enma use IPC resolvers
+    if (playerSource !== "allmanga" && playerSource !== "enma") {
+      // Build URL directly for other sources
+      const url = getSourceUrl(playerSource, "movie", item.id, 1, 1, {}, playerAccentColor, playerSubLang);
+      resolvedPlayerUrlRef.current = url;
+      setResolvedPlayerUrl(url);
+      setResolvingUrl(false);
+      resolvingUrlRef.current = false;
+      return;
+    }
+
+    // Auto-failover: if a previous attempt taught us this source doesn't have
     // this title, skip straight to the cached fallback source.
     if (sourceIsAsync(playerSource)) {
       const cached = getFailoverSource(epKey);
@@ -350,7 +361,6 @@ export default function MoviePage({
       }
     }
 
-    if (!sourceIsAsync(playerSource)) return;
     // Use refs as guards
     if (resolvedPlayerUrlRef.current || resolvingUrlRef.current) return;
     resolvingUrlRef.current = true;
@@ -358,6 +368,41 @@ export default function MoviePage({
     setResolveError(null);
     const startTime = storage.get("dlTime_" + progressKey) || 0;
     let mounted = true;
+
+    // Enma: resolve URL via main-process IPC
+    if (playerSource === "enma") {
+      const movieTitle = item.title || item.name || "";
+      window.electron
+        .resolveEnma({ title: movieTitle, episode: 1 })
+        .then((res) => {
+          if (!mounted) return;
+          if (res?.ok && res.url) {
+            clearFailoverSource(epKey);
+            resolvedPlayerUrlRef.current = res.url;
+            setResolvedPlayerUrl(res.url);
+            setResolvingUrl(false);
+            resolvingUrlRef.current = false;
+          } else {
+            setResolveError(res?.error || "Movie not found on Enma");
+            setResolvingUrl(false);
+            resolvingUrlRef.current = false;
+          }
+        })
+        .catch((e) => {
+          if (mounted) setResolveError(e.message || "Enma search failed");
+          setResolvingUrl(false);
+          resolvingUrlRef.current = false;
+        })
+        .finally(() => {
+          if (mounted) {
+            resolvingUrlRef.current = false;
+            setResolvingUrl(false);
+          }
+        });
+      return;
+    }
+
+    // AllManga: resolve via GraphQL IPC
     window.electron
       .resolveAllManga({
         title,
@@ -392,7 +437,6 @@ export default function MoviePage({
           }
         } else {
           // AllManga doesn't have this title → switch to the next source
-          // automatically and remember the choice for next time.
           const next = getNextNonAsyncSource(playerSource);
           if (next) {
             setFailoverSource(epKey, next);

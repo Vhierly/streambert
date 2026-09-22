@@ -781,11 +781,11 @@ export default function TVPage({
       setTimeout(injectCfSolver, 3000);
     }
 
-    // Only AllManga uses the GraphQL IPC resolver.
-    // Other anime sources (Enma, AnimePahe, Gogoanime, Aniwatch, 9Anime) load
+    // Only AllManga and Enma use IPC resolvers.
+    // Other anime sources (AnimePahe, Gogoanime, Aniwatch, 9Anime) load
     // their embed URL directly via the webview — no IPC resolver needed.
-    if (playerSource !== "allmanga") {
-      // Build URL directly for non-AllManga anime sources
+    if (playerSource !== "allmanga" && playerSource !== "enma") {
+      // Build URL directly for non-AllManga/non-Enma anime sources
       const url = getSourceUrl(
         playerSource,
         "tv",
@@ -800,6 +800,42 @@ export default function TVPage({
       setResolvedPlayerUrl(url);
       setResolvingUrl(false);
       resolvingUrlRef.current = false;
+      return;
+    }
+
+    // Enma: resolve URL via main-process IPC (search Enma for the show)
+    if (playerSource === "enma") {
+      const title = item.name || item.title || "";
+      if (!title) {
+        setResolveError("No title available for Enma search");
+        return;
+      }
+      resolvingUrlRef.current = true;
+      setResolvingUrl(true);
+      setResolveError(null);
+
+      window.electron
+        .resolveEnma({ title, episode: epNum })
+        .then((res) => {
+          if (!mounted) return;
+          if (res?.ok && res.url) {
+            clearFailoverSource(epKey);
+            resolvedPlayerUrlRef.current = res.url;
+            setResolvedPlayerUrl(res.url);
+            setResolvingUrl(false);
+            resolvingUrlRef.current = false;
+          } else {
+            setResolveError(res?.error || "Not found on Enma");
+            setResolvingUrl(false);
+            resolvingUrlRef.current = false;
+          }
+        })
+        .catch((e) => {
+          if (!mounted) return;
+          setResolveError(e.message || "Enma search failed");
+          setResolvingUrl(false);
+          resolvingUrlRef.current = false;
+        });
       return;
     }
     // Use refs as guards
@@ -847,22 +883,26 @@ export default function TVPage({
           const currentSrc = allSources.find((s) => s.id === playerSource);
           if (currentSrc?.tag) {
             // Current source is an anime source — try the next anime source
+            // For AllManga/Enma failures, try the next anime source (skip self)
             const animeSources = allSources.filter((s) => s.tag === "ANIME");
             const currentIdx = animeSources.findIndex((s) => s.id === playerSource);
-            const nextAnime = animeSources[(currentIdx + 1) % animeSources.length];
-            if (nextAnime && nextAnime.id !== playerSource) {
-              setFailoverSource(epKey, nextAnime.id);
-              setM3u8Url(null);
-              setInterceptedSubs([]);
-              resolvedPlayerUrlRef.current = null;
-              setResolvedPlayerUrl(null);
-              resolvingUrlRef.current = false;
-              setResolvingUrl(false);
-              setResolveError(null);
-              setPlayerSource(nextAnime.id);
-            } else {
-              setResolveError(res?.error || `Episode not found on ${currentSrc.label}`);
+            // Try all anime sources starting from the next one
+            for (let i = 1; i < animeSources.length; i++) {
+              const nextAnime = animeSources[(currentIdx + i) % animeSources.length];
+              if (nextAnime && nextAnime.id !== playerSource) {
+                setFailoverSource(epKey, nextAnime.id);
+                setM3u8Url(null);
+                setInterceptedSubs([]);
+                resolvedPlayerUrlRef.current = null;
+                setResolvedPlayerUrl(null);
+                resolvingUrlRef.current = false;
+                setResolvingUrl(false);
+                setResolveError(null);
+                setPlayerSource(nextAnime.id);
+                return;
+              }
             }
+            setResolveError(res?.error || `Episode not found on ${currentSrc.label}`);
           } else {
             // Current source is non-anime — show error, don't auto-switch
             setResolveError(res?.error || `Episode not found on ${currentSrc?.label || playerSource}`);

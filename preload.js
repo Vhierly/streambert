@@ -194,6 +194,9 @@ contextBridge.exposeInMainWorld("electron", {
   discordRpcUpdateActivity: (activity) =>
     ipcRenderer.invoke("discord-rpc-update-activity", activity),
 
+  // Enma anime resolver (main-process search, avoids CORS)
+  resolveEnma: (args) => ipcRenderer.invoke("resolve-enma", args),
+
   // Trakt.tv integration (PIN-based OAuth flow)
   traktGetPin: () => ipcRenderer.invoke("trakt-get-pin"),
   traktPollPin: (pin, interval) =>
