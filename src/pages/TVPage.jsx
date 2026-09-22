@@ -781,7 +781,27 @@ export default function TVPage({
       setTimeout(injectCfSolver, 3000);
     }
 
-    if (!isAsync) return;
+    // Only AllManga uses the GraphQL IPC resolver.
+    // Other anime sources (Enma, AnimePahe, Gogoanime, Aniwatch, 9Anime) load
+    // their embed URL directly via the webview — no IPC resolver needed.
+    if (playerSource !== "allmanga") {
+      // Build URL directly for non-AllManga anime sources
+      const url = getSourceUrl(
+        playerSource,
+        "tv",
+        item.id,
+        selectedSeason,
+        epNum,
+        {},
+        playerAccentColor,
+        playerSubLang,
+      );
+      resolvedPlayerUrlRef.current = url;
+      setResolvedPlayerUrl(url);
+      setResolvingUrl(false);
+      resolvingUrlRef.current = false;
+      return;
+    }
     // Use refs as guards
     if (resolvedPlayerUrlRef.current || resolvingUrlRef.current) return;
     resolvingUrlRef.current = true;
