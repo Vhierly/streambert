@@ -147,6 +147,25 @@ const BUILTIN_ADDONS = [
 let _addons = new Map(); // id → addon object
 let _loaded = false;
 
+// ── Persistence: installed community addons ──────────────────────────────────
+// Saved in localStorage so getAllSources() in api.js can read synchronously
+const INSTALLED_ADDONS_KEY = "streambert_installedAddons";
+
+function loadInstalledAddons() {
+  try {
+    const raw = localStorage.getItem(INSTALLED_ADDONS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveInstalledAddons(addons) {
+  try {
+    localStorage.setItem(INSTALLED_ADDONS_KEY, JSON.stringify(addons));
+  } catch {}
+}
+
 // ── Addon Manifest Schema ────────────────────────────────────────────────────
 // {
 //   "id": "my-addon",
@@ -183,6 +202,12 @@ export async function loadAddons() {
   for (const addon of BUILTIN_ADDONS) {
     _addons.set(addon.id, { ...addon, status: "active" });
   }
+
+  // Load previously installed community addons from localStorage
+  const installed = loadInstalledAddons();
+  for (const addon of installed) {
+    _addons.set(addon.id, { ...addon, status: "active", builtIn: false });
+  }
   
   // Load user addons (from addons/ directory in userData)
   if (window.electron?.getInstallPath) {
@@ -202,17 +227,27 @@ export function registerAddon(manifest) {
   if (!manifest.id || !manifest.name) {
     throw new Error("Addon must have id and name");
   }
-  _addons.set(manifest.id, {
+  const addon = {
     ...manifest,
     status: "active",
     builtIn: false,
-  });
+  };
+  _addons.set(manifest.id, addon);
+
+  // Persist to localStorage so getAllSources() can read it
+  const installed = loadInstalledAddons().filter((a) => a.id !== manifest.id);
+  installed.push(addon);
+  saveInstalledAddons(installed);
 }
 
 export function unregisterAddon(id) {
   const addon = _addons.get(id);
   if (addon?.builtIn) return false; // Can't remove built-in addons
   _addons.delete(id);
+
+  // Remove from localStorage
+  const installed = loadInstalledAddons().filter((a) => a.id !== id);
+  saveInstalledAddons(installed);
   return true;
 }
 
@@ -221,6 +256,11 @@ export function toggleAddon(id, enabled) {
   if (!addon) return null;
   addon.status = enabled ? "active" : "disabled";
   _addons.set(id, addon);
+
+  // Update localStorage
+  const installed = loadInstalledAddons().filter((a) => a.id !== id);
+  if (enabled) installed.push(addon);
+  saveInstalledAddons(installed);
   return addon;
 }
 

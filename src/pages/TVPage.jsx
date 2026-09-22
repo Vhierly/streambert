@@ -29,6 +29,7 @@ import {
   NON_ANIME_DEFAULT_SOURCE,
   NEEDS_INTERCEPT,
   getNextNonAsyncSource,
+  getAllSources,
 } from "../utils/api";
 import {
   BookmarkIcon,
@@ -399,6 +400,8 @@ export default function TVPage({
   const [playerSource, setPlayerSource] = useState(
     () => storage.get("playerSource") || NON_ANIME_DEFAULT_SOURCE,
   );
+  // All available sources (built-in + installed community addons)
+  const [allSources, setAllSources] = useState(() => getAllSources());
   // Accent colour + subtitle lang come from App-level state (via props),
   // so they are always fresh after Settings save without any extra storage reads.
   const playerAccentColor = playerSettings?.accentColor ?? null;
@@ -683,10 +686,10 @@ export default function TVPage({
         });
       // Switch to anime source only if current source is the default non-anime source
       // (i.e., user hasn't manually selected a different non-anime source)
-      const currentSrc = PLAYER_SOURCES.find((s) => s.id === playerSource);
+      const currentSrc = allSources.find((s) => s.id === playerSource);
       if (!currentSrc?.tag) {
         const saved = storage.get("playerSource");
-        const savedSrc = PLAYER_SOURCES.find((s) => s.id === saved);
+        const savedSrc = allSources.find((s) => s.id === saved);
         // Only auto-switch if the saved source is also non-anime (default behavior)
         // If user manually selected a non-anime source, respect their choice
         if (!savedSrc?.tag) {
@@ -696,10 +699,10 @@ export default function TVPage({
     } else {
       setAnilistLoading(false);
       // Switch back to non-anime source if current source is anime-only
-      const currentSrc = PLAYER_SOURCES.find((s) => s.id === playerSource);
+      const currentSrc = allSources.find((s) => s.id === playerSource);
       if (currentSrc?.tag) {
         const saved = storage.get("playerSource");
-        const savedSrc = PLAYER_SOURCES.find((s) => s.id === saved);
+        const savedSrc = allSources.find((s) => s.id === saved);
         setPlayerSource(!savedSrc?.tag ? saved : NON_ANIME_DEFAULT_SOURCE);
       }
     }
@@ -719,7 +722,7 @@ export default function TVPage({
     if (isAsync) {
       const cached = getFailoverSource(epKey);
       if (cached && cached !== playerSource) {
-        const cachedSrc = PLAYER_SOURCES.find((s) => s.id === cached);
+        const cachedSrc = allSources.find((s) => s.id === cached);
         // Only use cached fallback if it's also an anime source
         if (cachedSrc?.tag === "ANIME") {
           setM3u8Url(null);
@@ -812,10 +815,10 @@ export default function TVPage({
           }
         } else {
           // Only auto-failover between anime sources — don't jump to non-anime sources
-          const currentSrc = PLAYER_SOURCES.find((s) => s.id === playerSource);
+          const currentSrc = allSources.find((s) => s.id === playerSource);
           if (currentSrc?.tag) {
             // Current source is an anime source — try the next anime source
-            const animeSources = PLAYER_SOURCES.filter((s) => s.tag === "ANIME");
+            const animeSources = allSources.filter((s) => s.tag === "ANIME");
             const currentIdx = animeSources.findIndex((s) => s.id === playerSource);
             const nextAnime = animeSources[(currentIdx + 1) % animeSources.length];
             if (nextAnime && nextAnime.id !== playerSource) {
@@ -1860,7 +1863,7 @@ export default function TVPage({
                     <span style={{ fontSize: 14, color: "var(--text2)" }}>
                       {resolvingUrl
                         ? "Looking up episode on AllManga…"
-                        : `Loading ${PLAYER_SOURCES.find((s) => s.id === playerSource)?.label ?? "source"}…`}
+                        : `Loading ${allSources.find((s) => s.id === playerSource)?.label ?? "source"}…`}
                     </span>
                   </div>
                 )}
@@ -2158,7 +2161,7 @@ export default function TVPage({
                     title="Change source"
                   >
                     <SourceIcon />
-                    {PLAYER_SOURCES.find((s) => s.id === playerSource)?.label ??
+                    {allSources.find((s) => s.id === playerSource)?.label ??
                       "Source"}
                   </button>
                   {/* Sub/Dub toggle, only for AllManga */}
@@ -2241,7 +2244,7 @@ export default function TVPage({
                     style={{ top: menuPos.top, left: menuPos.left }}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {PLAYER_SOURCES.map((src) => (
+                    {allSources.map((src) => (
                       <button
                         key={src.id}
                         className={

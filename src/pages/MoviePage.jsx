@@ -13,6 +13,7 @@ import {
   PLAYER_SOURCES,
   getSourceUrl,
   sourceSupportsProgress,
+  getAllSources,
   sourceProgressViaFrames,
   sourceIsAsync,
   fetchAnilistData,
@@ -94,6 +95,8 @@ export default function MoviePage({
   const [playerSource, setPlayerSource] = useState(
     () => storage.get("playerSource") || NON_ANIME_DEFAULT_SOURCE,
   );
+  // All available sources (built-in + installed community addons)
+  const [allSources, setAllSources] = useState(() => getAllSources());
 
   // Accent colour + subtitle lang come from App-level state (via props),
   // so they are always fresh after Settings save without any extra storage reads.
@@ -295,18 +298,18 @@ export default function MoviePage({
         },
       );
       // Switch to anime source if current source is not an anime source
-      const currentSrc = PLAYER_SOURCES.find((s) => s.id === playerSource);
+      const currentSrc = allSources.find((s) => s.id === playerSource);
       if (!currentSrc?.tag) {
         const saved = storage.get("playerSource");
-        const savedSrc = PLAYER_SOURCES.find((s) => s.id === saved);
+        const savedSrc = allSources.find((s) => s.id === saved);
         setPlayerSource(savedSrc?.tag ? saved : ANIME_DEFAULT_SOURCE);
       }
     } else {
       // Switch back to non-anime source if current source is anime-only
-      const currentSrc = PLAYER_SOURCES.find((s) => s.id === playerSource);
+      const currentSrc = allSources.find((s) => s.id === playerSource);
       if (currentSrc?.tag) {
         const saved = storage.get("playerSource");
-        const savedSrc = PLAYER_SOURCES.find((s) => s.id === saved);
+        const savedSrc = allSources.find((s) => s.id === saved);
         setPlayerSource(!savedSrc?.tag ? saved : NON_ANIME_DEFAULT_SOURCE);
       }
     }
@@ -971,7 +974,7 @@ export default function MoviePage({
                 <span style={{ fontSize: 14, color: "var(--text2)" }}>
                   {resolvingUrl
                     ? "Looking up movie on AllManga…"
-                    : `Loading ${PLAYER_SOURCES.find((s) => s.id === playerSource)?.label ?? "source"}…`}
+                    : `Loading ${allSources.find((s) => s.id === playerSource)?.label ?? "source"}…`}
                 </span>
               </div>
             )}
@@ -1096,7 +1099,7 @@ export default function MoviePage({
                 title="Change source"
               >
                 <SourceIcon />
-                {PLAYER_SOURCES.find((s) => s.id === playerSource)?.label ??
+                {allSources.find((s) => s.id === playerSource)?.label ??
                   "Source"}
               </button>
               {/* Sub/Dub toggle, only for async (AllManga) sources */}
@@ -1175,7 +1178,7 @@ export default function MoviePage({
                 style={{ top: menuPos.top, left: menuPos.left }}
                 onClick={(e) => e.stopPropagation()}
               >
-                {PLAYER_SOURCES.map((src) => (
+                {allSources.map((src) => (
                   <button
                     key={src.id}
                     className={

@@ -364,6 +364,38 @@ export const getNextNonAsyncSource = (currentId) => {
 // Sources that require a transparent webRequest intercept to load properly
 export const NEEDS_INTERCEPT = ["vidsrc", "vidlink", "vidspark", "vidfast", "vidcore", "vidphantom", "cinextream", "vidsrc3", "animepahe", "gogoanime", "aniwatch", "nineanime"];
 
+/**
+ * Get all available sources — built-in PLAYER_SOURCES + installed community addons.
+ * Reads installed addons from localStorage for synchronous access.
+ */
+export function getAllSources() {
+  try {
+    // Read installed community addons from localStorage (set by addons.js)
+    const raw = localStorage.getItem("streambert_installedAddons");
+    const installedAddons = raw ? JSON.parse(raw) : [];
+    const communitySources = installedAddons
+      .filter((a) => a.status === "active")
+      .map((a) => ({
+        id: a.id,
+        label: a.name,
+        tag: a.tag || null,
+        note: a.note || null,
+        supportsProgress: a.supportsProgress ?? true,
+        colorParam: a.colorParam || null,
+        langParam: a.langParam || null,
+        params: a.params || {},
+        movieUrl: a.movieUrl || ((_id) => `https://${a.id}`),
+        tvUrl: a.tvUrl || ((_id, _s, _e) => `https://${a.id}`),
+        async: a.async ?? false,
+        progressViaFrames: a.progressViaFrames ?? false,
+        isCommunity: true,
+      }));
+    return [...PLAYER_SOURCES, ...communitySources];
+  } catch {
+    return PLAYER_SOURCES;
+  }
+}
+
 // ── AniList API (anime metadata) ──────────────────────────────────────────────
 const ANILIST_API = "https://graphql.anilist.co";
 
