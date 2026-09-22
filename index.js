@@ -326,6 +326,89 @@ playerIpc.register(getMainWindow, {
 blockStats.init(getMainWindow);
 discordRpc.register(ipcMain);
 
+// ── Trakt.tv IPC handlers ────────────────────────────────────────────────────
+// Trakt API calls go through the main process to avoid CORS issues and keep
+// tokens secure. The renderer stores tokens in localStorage but delegates
+// all network calls here.
+ipcMain.handle("trakt-start-device-auth", async () => {
+  const res = await fetch("https://trakt.tv/oauth/device/code", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: "streambert" }),
+  });
+  if (!res.ok) throw new Error("Trakt device auth failed");
+  return res.json();
+});
+
+ipcMain.handle("trakt-poll-device-auth", async (_, { deviceCode, interval = 5 }) => {
+  const maxAttempts = Math.floor(900 / interval);
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, interval * 1000));
+    const res = await fetch("https://trakt.tv/oauth/device/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: deviceCode,
+        client_id: "streambert",
+        client_secret: "",
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return { ok: true, ...data };
+    }
+    const err = await res.json().catch(() => ({}));
+    if (err.error === "authorization_pending") continue;
+    if (err.error === "expired_token") return { ok: false, error: "Code expired" };
+    if (err.error === "access_denied") return { ok: false, error: "Denied" };
+    return { ok: false, error: err.error || "Unknown error" };
+  }
+  return { ok: false, error: "Timeout" };
+});
+
+ipcMain.handle("trakt-logout", () => {
+  // Renderer clears localStorage; nothing to do in main
+  return { ok: true };
+});
+
+ipcMain.handle("trakt-is-connected", () => {
+  // Renderer checks localStorage; this is a fallback
+  return false;
+});
+
+// ── Smart Downloads IPC handlers ──────────────────────────────────────────────
+// Queue management is done in renderer (localStorage); these handlers provide
+// main-process helpers for future enhancements (e.g., actual download execution).
+ipcMain.handle("get-smart-download-settings", () => {
+  // Renderer handles this; return empty for now
+  return {};
+});
+
+ipcMain.handle("set-smart-download-settings", (_, settings) => {
+  // Renderer handles this
+  return { ok: true };
+});
+
+ipcMain.handle("get-download-queue", () => {
+  // Renderer handles this
+  return [];
+});
+
+ipcMain.handle("add-to-queue", (_, { item, priority }) => {
+  // Renderer handles this
+  return { ok: true };
+});
+
+ipcMain.handle("remove-from-queue", (_, id) => {
+  // Renderer handles this
+  return { ok: true };
+});
+
+ipcMain.handle("update-queue-item", (_, { id, updates }) => {
+  // Renderer handles this
+  return { ok: true };
+});
+
 // get-block-stats lives with its data
 ipcMain.handle("get-block-stats", () => blockStats.getBlockStats());
 

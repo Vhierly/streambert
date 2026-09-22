@@ -1852,6 +1852,149 @@ function StartPageSection() {
   );
 }
 
+// ── Trakt.tv Integration ──────────────────────────────────────────────────────
+function TraktSection() {
+  const [connected, setConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [deviceCode, setDeviceCode] = useState(null);
+  const [error, setError] = useState(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    import("../utils/trakt").then((m) => {
+      setConnected(m.traktIsConnected());
+    });
+  }, []);
+
+  const handleConnect = async () => {
+    setConnecting(true);
+    setError(null);
+    try {
+      const m = await import("../utils/trakt");
+      const device = await m.traktStartDeviceAuth();
+      setDeviceCode(device);
+      // Poll for completion
+      const result = await m.traktPollDeviceAuth(device.device_code, device.interval || 5);
+      if (result.ok) {
+        setConnected(true);
+        setDeviceCode(null);
+      } else {
+        setError(result.error || "Connection failed");
+      }
+    } catch (e) {
+      setError(e.message || "Connection failed");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    const m = await import("../utils/trakt");
+    m.traktLogout();
+    setConnected(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div style={{ marginBottom: 40 }}>
+      <div className="settings-section-title">Trakt.tv</div>
+      <div
+        style={{
+          fontSize: 13,
+          color: "var(--text3)",
+          marginBottom: 16,
+          lineHeight: 1.6,
+        }}
+      >
+        Connect your Trakt.tv account to sync watch history, get recommendations,
+        and track what you watch across devices.
+      </div>
+
+      {connected ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "14px 18px",
+            background: "rgba(72, 199, 116, 0.08)",
+            border: "1px solid rgba(72, 199, 116, 0.3)",
+            borderRadius: 10,
+          }}
+        >
+          <span style={{ fontSize: 14, color: "#48c774", fontWeight: 600 }}>
+            ✓ Connected to Trakt.tv
+          </span>
+          <button
+            className="btn btn-ghost"
+            style={{ marginLeft: "auto", fontSize: 13 }}
+            onClick={handleDisconnect}
+          >
+            Disconnect
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <button
+            className="btn btn-primary"
+            disabled={connecting}
+            onClick={handleConnect}
+            style={{ opacity: connecting ? 0.6 : 1 }}
+          >
+            {connecting ? "Connecting…" : "Connect Trakt.tv"}
+          </button>
+
+          {deviceCode && (
+            <div
+              style={{
+                padding: "14px 18px",
+                background: "var(--surface2)",
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                fontSize: 13,
+              }}
+            >
+              <div style={{ marginBottom: 8, color: "var(--text2)" }}>
+                Enter this code at{" "}
+                <a
+                  href={deviceCode.verification_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "var(--red)", textDecoration: "underline" }}
+                >
+                  {deviceCode.verification_url}
+                </a>
+              </div>
+              <div
+                style={{
+                  fontSize: 24,
+                  fontWeight: 700,
+                  letterSpacing: 4,
+                  color: "var(--text)",
+                  fontFamily: "monospace",
+                }}
+              >
+                {deviceCode.user_code}
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div style={{ fontSize: 13, color: "var(--red)" }}>✕ {error}</div>
+          )}
+        </div>
+      )}
+
+      {saved && (
+        <span style={{ fontSize: 13, color: "#48c774", marginTop: 8 }}>
+          ✓ Saved
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ── TMDB Metadata Language ────────────────────────────────────────────────────
 const TMDB_LANGUAGES = [
   { value: "en-US", label: "English (en-US)" },
@@ -3334,6 +3477,305 @@ function SettingsTopBar({ sectionRefs, contentRef }) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
+// ── Smart Downloads Section ───────────────────────────────────────────────────
+function SmartDownloadsSection() {
+  const [enabled, setEnabled] = useState(false);
+  const [autoDownload, setAutoDownload] = useState(true);
+  const [quality, setQuality] = useState("1080p");
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [startHour, setStartHour] = useState(2);
+  const [endHour, setEndHour] = useState(6);
+  const [maxConcurrent, setMaxConcurrent] = useState(2);
+  const [maxBandwidth, setMaxBandwidth] = useState(0);
+  const [autoConvert, setAutoConvert] = useState(false);
+  const [convertFormat, setConvertFormat] = useState("h265");
+  const [convertPreset, setConvertPreset] = useState("medium");
+  const [saved, setSaved] = useState(false);
+
+  // Load settings on mount
+  useEffect(() => {
+    import("../utils/smartDownloads").then((m) => {
+      const s = m.getSmartDownloadSettings();
+      setEnabled(s.enabled);
+      setAutoDownload(s.autoDownloadNewEpisodes);
+      setQuality(s.preferredQuality);
+      setScheduleEnabled(s.scheduleEnabled);
+      setStartHour(s.scheduleStartHour);
+      setEndHour(s.scheduleEndHour);
+      setMaxConcurrent(s.maxConcurrent);
+      setMaxBandwidth(s.maxBandwidth);
+      setAutoConvert(s.autoConvert);
+      setConvertFormat(s.convertFormat);
+      setConvertPreset(s.convertPreset);
+    });
+  }, []);
+
+  const handleSave = async () => {
+    const { saveSmartDownloadSettings } = await import("../utils/smartDownloads");
+    saveSmartDownloadSettings({
+      enabled,
+      autoDownloadNewEpisodes: autoDownload,
+      preferredQuality: quality,
+      scheduleEnabled,
+      scheduleStartHour: startHour,
+      scheduleEndHour: endHour,
+      maxConcurrent,
+      maxBandwidth,
+      autoConvert,
+      convertFormat,
+      convertPreset,
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div style={{ marginBottom: 40 }}>
+      <div className="settings-section-title">Smart Downloads</div>
+      <div
+        style={{
+          fontSize: 13,
+          color: "var(--text3)",
+          marginBottom: 20,
+          lineHeight: 1.6,
+        }}
+      >
+        Automatically download new episodes, schedule downloads for off-peak
+        hours, and manage bandwidth usage.
+      </div>
+
+      {/* Enable toggle */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Toggle value={enabled} onChange={setEnabled} />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>
+              Enable Smart Downloads
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
+              Automatically download new episodes of followed shows
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {enabled && (
+        <>
+          {/* Auto-download toggle */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Toggle value={autoDownload} onChange={setAutoDownload} />
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>
+                  Auto-download new episodes
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
+                  When a new episode of a followed show is released
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Quality */}
+          <div style={{ marginBottom: 20 }}>
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: "var(--text2)",
+                marginBottom: 8,
+              }}
+            >
+              Preferred Quality
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {["720p", "1080p", "4K"].map((q) => (
+                <button
+                  key={q}
+                  onClick={() => setQuality(q)}
+                  className={
+                    quality === q ? "btn btn-primary" : "btn btn-ghost"
+                  }
+                  style={{ padding: "7px 18px", fontSize: 13 }}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Schedule */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Toggle value={scheduleEnabled} onChange={setScheduleEnabled} />
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>
+                  Schedule downloads
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
+                  Only download during specific hours
+                </div>
+              </div>
+            </div>
+            {scheduleEnabled && (
+              <div
+                style={{
+                  marginTop: 12,
+                  display: "flex",
+                  gap: 12,
+                  alignItems: "center",
+                }}
+              >
+                <label style={{ fontSize: 13, color: "var(--text2)" }}>
+                  From
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={startHour}
+                    onChange={(e) => setStartHour(Number(e.target.value))}
+                    className="apikey-input"
+                    style={{ width: 70, marginLeft: 8 }}
+                  />
+                </label>
+                <label style={{ fontSize: 13, color: "var(--text2)" }}>
+                  To
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={endHour}
+                    onChange={(e) => setEndHour(Number(e.target.value))}
+                    className="apikey-input"
+                    style={{ width: 70, marginLeft: 8 }}
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+
+          {/* Max concurrent */}
+          <div style={{ marginBottom: 20 }}>
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: "var(--text2)",
+                marginBottom: 8,
+              }}
+            >
+              Max Concurrent Downloads
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setMaxConcurrent(n)}
+                  className={
+                    maxConcurrent === n ? "btn btn-primary" : "btn btn-ghost"
+                  }
+                  style={{ padding: "7px 14px", fontSize: 13, minWidth: 44 }}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Max bandwidth */}
+          <div style={{ marginBottom: 20 }}>
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: "var(--text2)",
+                marginBottom: 8,
+              }}
+            >
+              Bandwidth Limit (MB/s)
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <input
+                type="number"
+                min={0}
+                max={1000}
+                value={maxBandwidth}
+                onChange={(e) => setMaxBandwidth(Number(e.target.value))}
+                className="apikey-input"
+                style={{ width: 100 }}
+              />
+              <span style={{ fontSize: 13, color: "var(--text3)" }}>
+                0 = unlimited
+              </span>
+            </div>
+          </div>
+
+          {/* Auto-convert */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Toggle value={autoConvert} onChange={setAutoConvert} />
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>
+                  Auto-convert after download
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
+                  Convert to a more efficient format using ffmpeg
+                </div>
+              </div>
+            </div>
+            {autoConvert && (
+              <div
+                style={{
+                  marginTop: 12,
+                  display: "flex",
+                  gap: 16,
+                  flexWrap: "wrap",
+                }}
+              >
+                <label style={{ fontSize: 13, color: "var(--text2)" }}>
+                  Format
+                  <select
+                    value={convertFormat}
+                    onChange={(e) => setConvertFormat(e.target.value)}
+                    className="apikey-input"
+                    style={{ marginLeft: 8, width: "auto" }}
+                  >
+                    <option value="h265">H.265 (HEVC)</option>
+                    <option value="h264">H.264 (AVC)</option>
+                    <option value="aac">AAC Audio</option>
+                  </select>
+                </label>
+                <label style={{ fontSize: 13, color: "var(--text2)" }}>
+                  Preset
+                  <select
+                    value={convertPreset}
+                    onChange={(e) => setConvertPreset(e.target.value)}
+                    className="apikey-input"
+                    style={{ marginLeft: 8, width: "auto" }}
+                  >
+                    <option value="fast">Fast (lower quality)</option>
+                    <option value="medium">Medium (balanced)</option>
+                    <option value="slow">Slow (best quality)</option>
+                  </select>
+                </label>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button className="btn btn-primary" onClick={handleSave}>
+          Save
+        </button>
+        {saved && (
+          <span style={{ fontSize: 13, color: "#48c774" }}>✓ Saved</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage({
   apiKey,
   onChangeApiKey,
@@ -3693,6 +4135,7 @@ export default function SettingsPage({
           <Divider />
 
           <TmdbLanguageSection />
+          <TraktSection />
         </div>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
@@ -4278,6 +4721,10 @@ export default function SettingsPage({
               </div>
             )}
           </div>
+
+          <Divider />
+
+          <SmartDownloadsSection />
         </div>
 
         {/* ══════════════════════════════════════════════════════════════════ */}

@@ -193,6 +193,26 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("discord-rpc-set-enabled", enabled),
   discordRpcUpdateActivity: (activity) =>
     ipcRenderer.invoke("discord-rpc-update-activity", activity),
+
+  // Trakt.tv integration
+  traktStartDeviceAuth: () =>
+    ipcRenderer.invoke("trakt-start-device-auth"),
+  traktPollDeviceAuth: (deviceCode, interval) =>
+    ipcRenderer.invoke("trakt-poll-device-auth", { deviceCode, interval }),
+  traktLogout: () => ipcRenderer.invoke("trakt-logout"),
+  traktIsConnected: () => ipcRenderer.invoke("trakt-is-connected"),
+
+  // Smart Downloads queue management
+  getSmartDownloadSettings: () =>
+    ipcRenderer.invoke("get-smart-download-settings"),
+  setSmartDownloadSettings: (settings) =>
+    ipcRenderer.invoke("set-smart-download-settings", settings),
+  getDownloadQueue: () => ipcRenderer.invoke("get-download-queue"),
+  addToQueue: (item, priority) =>
+    ipcRenderer.invoke("add-to-queue", { item, priority }),
+  removeFromQueue: (id) => ipcRenderer.invoke("remove-from-queue", id),
+  updateQueueItem: (id, updates) =>
+    ipcRenderer.invoke("update-queue-item", { id, updates }),
 });
 
 if (process.platform === "darwin") {

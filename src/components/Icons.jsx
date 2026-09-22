@@ -42,6 +42,11 @@ export const CloseIcon = () => (
     <line x1="6" y1="6" x2="18" y2="18" />
   </svg>
 );
+export const FilterIcon = ({ size = 20 }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width={size} height={size}>
+    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+  </svg>
+);
 export const FilmIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />
