@@ -535,6 +535,40 @@ export default function MoviePage({
     };
   }, [playing, gamepadEnabled]);
 
+  // Cloudflare challenge handler for ALL sources — auto-solve "I'm not a robot"
+  useEffect(() => {
+    if (!playing) return;
+    const wv = webviewRef.current;
+    if (!wv) return;
+
+    const injectCfSolver = () => {
+      wv.executeJavaScript(`
+        (function() {
+          const checkbox = document.querySelector('input[type="checkbox"]');
+          if (checkbox && !checkbox.checked) {
+            checkbox.click();
+            return 'clicked';
+          }
+          const btn = document.querySelector('button[aria-label*="robot"], button[id*="challenge"], .cf-challenge-btn, [class*="challenge"] button');
+          if (btn) {
+            btn.click();
+            return 'button_clicked';
+          }
+          const form = document.querySelector('form');
+          if (form) {
+            form.submit();
+            return 'form_submitted';
+          }
+          return 'no_challenge';
+        })();
+      `).catch(() => {});
+    };
+
+    const t1 = setTimeout(injectCfSolver, 1000);
+    const t2 = setTimeout(injectCfSolver, 3000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [playing, playerSource]);
+
   // Attach webview load events so we know when the new source has painted
   useEffect(() => {
     if (!playing) return;

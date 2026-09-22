@@ -3780,11 +3780,15 @@ function ServerClientSection() {
 // ── Addon Gallery ───────────────────────────────────────────────────────────
 function AddonGallerySection() {
   const [addons, setAddons] = useState([]);
+  const [communityAddons, setCommunityAddons] = useState([]);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     import("../utils/addons").then((m) => {
       setAddons(m.getAddonGallery());
+    });
+    import("../utils/communityAddons").then((m) => {
+      setCommunityAddons(m.COMMUNITY_ADDONS);
     });
   }, []);
 
@@ -3792,6 +3796,14 @@ function AddonGallerySection() {
     const m = await import("../utils/addons");
     const enabled = currentStatus !== "active";
     m.toggleAddon(id, enabled);
+    setAddons(m.getAddonGallery());
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleInstall = async (addonDef) => {
+    const m = await import("../utils/addons");
+    m.registerAddon(addonDef.manifest);
     setAddons(m.getAddonGallery());
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -3809,10 +3821,23 @@ function AddonGallerySection() {
         }}
       >
         Manage streaming sources and metadata providers. Built-in addons cannot
-        be disabled.
+        be disabled. Community addons can be installed below.
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Installed addons */}
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 600,
+          color: "var(--text2)",
+          marginBottom: 8,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+        }}
+      >
+        Installed ({addons.length})
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
         {addons.map((addon) => (
           <div
             key={addon.id}
@@ -3877,6 +3902,107 @@ function AddonGallerySection() {
             )}
           </div>
         ))}
+      </div>
+
+      {/* Community addons */}
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 600,
+          color: "var(--text2)",
+          marginBottom: 8,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+        }}
+      >
+        Community Addons ({communityAddons.length})
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {communityAddons.map((addonDef) => {
+          const isInstalled = addons.some((a) => a.id === addonDef.id);
+          return (
+            <div
+              key={addonDef.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "12px 16px",
+                background: isInstalled ? "var(--surface2)" : "var(--surface)",
+                border: `1px solid ${isInstalled ? "var(--border)" : "rgba(139, 92, 246, 0.3)"}`,
+                borderRadius: 8,
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: "var(--text)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  {addonDef.name}
+                  {addonDef.tag === "ANIME" && (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: "#a78bfa",
+                        background: "rgba(139, 92, 246, 0.2)",
+                        padding: "2px 6px",
+                        borderRadius: 4,
+                      }}
+                    >
+                      ANIME
+                    </span>
+                  )}
+                  {isInstalled && (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: "#48c774",
+                        background: "rgba(72, 199, 116, 0.15)",
+                        padding: "2px 6px",
+                        borderRadius: 4,
+                      }}
+                    >
+                      INSTALLED
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
+                  {addonDef.description}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 2 }}>
+                  v{addonDef.version} · by {addonDef.author}
+                </div>
+              </div>
+              {!isInstalled ? (
+                <button
+                  className="btn btn-primary"
+                  style={{ padding: "7px 14px", fontSize: 13 }}
+                  onClick={() => handleInstall(addonDef)}
+                >
+                  + Add
+                </button>
+              ) : (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "#48c774",
+                    fontWeight: 500,
+                  }}
+                >
+                  ✓ Installed
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {saved && (

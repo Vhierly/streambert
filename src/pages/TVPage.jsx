@@ -714,26 +714,30 @@ export default function TVPage({
     const epNum = selectedEp.episode_number;
     const epKey = `tv_${item.id}_s${selectedSeason}_e${epNum}_${dubMode}`;
 
-    // Auto-failover: if a previous attempt taught us AllManga doesn't have
-    // this episode, skip straight to the cached fallback source.
+    // Auto-failover: if a previous attempt taught us this source doesn't have
+    // this episode, skip straight to the cached fallback source (only if it's also anime).
     if (isAsync) {
       const cached = getFailoverSource(epKey);
       if (cached && cached !== playerSource) {
-        setM3u8Url(null);
-        setInterceptedSubs([]);
-        resolvedPlayerUrlRef.current = null;
-        setResolvedPlayerUrl(null);
-        resolvingUrlRef.current = false;
-        setResolvingUrl(false);
-        setResolveError(null);
-        setPlayerSource(cached);
-        return;
+        const cachedSrc = PLAYER_SOURCES.find((s) => s.id === cached);
+        // Only use cached fallback if it's also an anime source
+        if (cachedSrc?.tag === "ANIME") {
+          setM3u8Url(null);
+          setInterceptedSubs([]);
+          resolvedPlayerUrlRef.current = null;
+          setResolvedPlayerUrl(null);
+          resolvingUrlRef.current = false;
+          setResolvingUrl(false);
+          setResolveError(null);
+          setPlayerSource(cached);
+          return;
+        }
       }
     }
 
-    // Cloudflare challenge handler for VidCore — auto-click "I'm not a robot"
+    // Cloudflare challenge handler for ALL sources — auto-solve "I'm not a robot"
     const wv = webviewRef.current;
-    if (wv && playerSource === "vidcore") {
+    if (wv) {
       const injectCfSolver = () => {
         wv.executeJavaScript(`
           (function() {
@@ -744,7 +748,7 @@ export default function TVPage({
               return 'clicked';
             }
             // Try to click the "I'm not a robot" button
-            const btn = document.querySelector('button[aria-label*="robot"], button[id*="challenge"]');
+            const btn = document.querySelector('button[aria-label*="robot"], button[id*="challenge"], .cf-challenge-btn, [class*="challenge"] button');
             if (btn) {
               btn.click();
               return 'button_clicked';
@@ -761,6 +765,8 @@ export default function TVPage({
       };
       // Inject after a short delay to let the page load
       setTimeout(injectCfSolver, 1000);
+      // Also retry after 3 seconds in case the challenge appears later
+      setTimeout(injectCfSolver, 3000);
     }
 
     if (!isAsync) return;
@@ -805,19 +811,29 @@ export default function TVPage({
             setResolvedPlayerUrl(res.url);
           }
         } else {
-          // AllManga doesn't have this episode → switch to the next source
-          // automatically and remember the choice for next time.
-          const next = getNextNonAsyncSource(playerSource);
-          if (next) {
-            setFailoverSource(epKey, next);
-            setM3u8Url(null);
-            setInterceptedSubs([]);
-            resolvedPlayerUrlRef.current = null;
-            setResolvedPlayerUrl(null);
-            setResolveError(null);
-            setPlayerSource(next);
+          // Only auto-failover between anime sources — don't jump to non-anime sources
+          const currentSrc = PLAYER_SOURCES.find((s) => s.id === playerSource);
+          if (currentSrc?.tag) {
+            // Current source is an anime source — try the next anime source
+            const animeSources = PLAYER_SOURCES.filter((s) => s.tag === "ANIME");
+            const currentIdx = animeSources.findIndex((s) => s.id === playerSource);
+            const nextAnime = animeSources[(currentIdx + 1) % animeSources.length];
+            if (nextAnime && nextAnime.id !== playerSource) {
+              setFailoverSource(epKey, nextAnime.id);
+              setM3u8Url(null);
+              setInterceptedSubs([]);
+              resolvedPlayerUrlRef.current = null;
+              setResolvedPlayerUrl(null);
+              resolvingUrlRef.current = false;
+              setResolvingUrl(false);
+              setResolveError(null);
+              setPlayerSource(nextAnime.id);
+            } else {
+              setResolveError(res?.error || `Episode not found on ${currentSrc.label}`);
+            }
           } else {
-            setResolveError(res?.error || "Episode not found on AllManga");
+            // Current source is non-anime — show error, don't auto-switch
+            setResolveError(res?.error || `Episode not found on ${currentSrc?.label || playerSource}`);
           }
         }
       })
