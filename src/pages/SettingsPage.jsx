@@ -693,7 +693,12 @@ function VersionSection() {
 
         {result && !result.error && !result.hasUpdate && (
           <span style={{ fontSize: 13, color: "#48c774", fontWeight: 500 }}>
-            ✓ You're up to date
+            ✓ You're up to date (v{result.current} → v{result.latest})
+          </span>
+        )}
+        {result && !result.error && result.hasUpdate && (
+          <span style={{ fontSize: 13, color: "#ff9800", fontWeight: 500 }}>
+            🎉 v{result.latest} available (current: v{result.current})
           </span>
         )}
 

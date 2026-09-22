@@ -46,9 +46,20 @@ export function semverGt(a, b) {
 
 // Fetch current app version fresh each time, avoids race condition
 async function getCurrentVersion() {
+  // Primary: Electron IPC (most reliable in built app)
   if (typeof window !== "undefined" && window.electron?.getAppVersion) {
-    return window.electron.getAppVersion();
+    try {
+      const v = await window.electron.getAppVersion();
+      if (v && v !== "0.0.0") return v;
+    } catch {}
   }
+  // Fallback: read from package.json via fetch (works in dev / web)
+  try {
+    const res = await fetch("./package.json");
+    const data = await res.json();
+    if (data.version) return data.version;
+  } catch {}
+  // Last resort: return 0.0.0 so update check always finds latest
   return "0.0.0";
 }
 
