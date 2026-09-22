@@ -583,6 +583,19 @@ function VersionSection() {
     setTimeout(() => setAutoSaved(false), 1800);
   };
 
+  // DNS Ad Blocking (AdGuard DNS)
+  const [dnsAdblock, setDnsAdblock] = useState(() => {
+    return localStorage.getItem("streambert_dnsAdblock") === "1";
+  });
+  const [dnsSaved, setDnsSaved] = useState(false);
+
+  const toggleDnsAdblock = (val) => {
+    setDnsAdblock(val);
+    localStorage.setItem("streambert_dnsAdblock", val ? "1" : "0");
+    setDnsSaved(true);
+    setTimeout(() => setDnsSaved(false), 1800);
+  };
+
   return (
     <div style={{ marginBottom: 40 }}>
       <div className="settings-section-title">App Version</div>
@@ -741,6 +754,41 @@ function VersionSection() {
         </div>
         {autoSaved && (
           <span style={{ fontSize: 12, color: "#48c774" }}>✓ Saved</span>
+        )}
+      </div>
+
+      {/* DNS Ad Blocking (AdGuard DNS) */}
+      <div
+        style={{
+          marginTop: 20,
+          padding: "16px 18px",
+          background: "var(--surface2)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Toggle value={dnsAdblock} onChange={toggleDnsAdblock} />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+              DNS Ad Blocking (AdGuard DNS)
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
+              Block ads at the DNS level using AdGuard DNS servers
+              (94.140.14.14). Requires restart to take effect.
+            </div>
+          </div>
+        </div>
+        {dnsSaved && (
+          <div style={{ marginTop: 8, fontSize: 12, color: "#48c774" }}>
+            ✓ Saved — restart app to apply
+          </div>
+        )}
+        {dnsAdblock && (
+          <div style={{ marginTop: 8, fontSize: 11, color: "#ff9800" }}>
+            ⚠ Some legitimate content may be blocked. You can disable this in
+            Settings.
+          </div>
         )}
       </div>
     </div>

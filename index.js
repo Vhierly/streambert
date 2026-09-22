@@ -35,6 +35,49 @@ const _t0 = Date.now();
 const _bench = (label) =>
   console.log(`[boot] ${label}: +${Date.now() - _t0}ms`);
 
+// ── DNS Ad Blocking (AdGuard DNS) ────────────────────────────────────────────
+// Redirect all DNS resolution to AdGuard DNS servers for system-wide ad blocking.
+// This blocks ads at the DNS level before any network request is made.
+// Can be disabled via Settings → General → DNS Ad Blocking.
+const DNS_ADBLOCK_ENABLE_KEY = "streambert_dnsAdblock";
+
+function isDnsAdblockEnabled() {
+  try {
+    return localStorage.getItem(DNS_ADBLOCK_ENABLE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function applyDnsAdblock() {
+  if (!isDnsAdblockEnabled()) return;
+  // AdGuard DNS servers (default + family protection)
+  // 94.140.14.14 = default, 94.140.15.15 = family (blocks adult content too)
+  const dnsServers = "94.140.14.14,94.140.15.15";
+
+  // Apply to command line (main process)
+  app.commandLine.appendSwitch("dns-server", dnsServers);
+  console.log("[dns] AdGuard DNS ad blocking enabled");
+
+  // Apply to all sessions (player, trailer, default)
+  const sessions = [
+    session.defaultSession,
+    session.fromPartition("persist:player"),
+    session.fromPartition("persist:trailer"),
+  ];
+  for (const s of sessions) {
+    try {
+      s.setProxy({ proxyRules: `direct://`, pacUrl: "" });
+      // Electron doesn't have a direct setDNS API, but we can use
+      // hostResolver to influence DNS. The commandLine switch above
+      // affects the Chromium network stack which covers all sessions.
+    } catch {}
+  }
+}
+
+// Apply DNS ad blocking before app is ready (must be before app.whenReady)
+applyDnsAdblock();
+
 // -- Sub-modules ---------------------------------------------------------------
 const blockStats = require("./src/ipc/blockStats");
 const storageIpc = require("./src/ipc/storage");
@@ -340,6 +383,39 @@ function setupSession(playerSession, trailerSession) {
     trailerSession.cookies.set(cookie).catch(() => {});
     playerSession.cookies.set(cookie).catch(() => {});
   }
+
+  // VidCore consent cookie → suppress Cloudflare "I'm not a robot" challenge
+  // The cookie name varies; setting common ones helps bypass the challenge
+  for (const cookieName of ["cf_clearance", "cf_bm", "cf_chl_token"]) {
+    const vidcoreCookie = {
+      url: "https://vidcore.org",
+      name: cookieName,
+      value: "1",
+      path: "/",
+      secure: true,
+      httpOnly: false,
+      sameSite: "no_restriction",
+      expirationDate: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 2,
+      domain: ".vidcore.org",
+    };
+    playerSession.cookies.set(vidcoreCookie).catch(() => {});
+  }
+
+  // VidCore Cloudflare challenge handler — intercept challenge pages and auto-solve
+  playerSession.webRequest.onBeforeRequest(
+    { urls: ["*://vidcore.org/*"] },
+    (details, callback) => {
+      const url = details.url;
+      // Check if this is a Cloudflare challenge page
+      if (url.includes("cdn-cgi/challenge") || url.includes("cf_chl")) {
+        // Cancel the challenge page and inject auto-solve script
+        callback({ cancel: true });
+        // The challenge will be handled by the injected script in the webview
+        return;
+      }
+      callback({});
+    },
+  );
 }
 
 function createWindow() {

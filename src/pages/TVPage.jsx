@@ -681,12 +681,17 @@ export default function TVPage({
         .catch(() => {
           if (mounted) setAnilistLoading(false);
         });
-      // Switch to anime source if current source is not an anime source
+      // Switch to anime source only if current source is the default non-anime source
+      // (i.e., user hasn't manually selected a different non-anime source)
       const currentSrc = PLAYER_SOURCES.find((s) => s.id === playerSource);
       if (!currentSrc?.tag) {
         const saved = storage.get("playerSource");
         const savedSrc = PLAYER_SOURCES.find((s) => s.id === saved);
-        setPlayerSource(savedSrc?.tag ? saved : ANIME_DEFAULT_SOURCE);
+        // Only auto-switch if the saved source is also non-anime (default behavior)
+        // If user manually selected a non-anime source, respect their choice
+        if (!savedSrc?.tag) {
+          setPlayerSource(ANIME_DEFAULT_SOURCE);
+        }
       }
     } else {
       setAnilistLoading(false);
@@ -724,6 +729,38 @@ export default function TVPage({
         setPlayerSource(cached);
         return;
       }
+    }
+
+    // Cloudflare challenge handler for VidCore — auto-click "I'm not a robot"
+    const wv = webviewRef.current;
+    if (wv && playerSource === "vidcore") {
+      const injectCfSolver = () => {
+        wv.executeJavaScript(`
+          (function() {
+            // Try to click the Cloudflare checkbox
+            const checkbox = document.querySelector('input[type="checkbox"]');
+            if (checkbox && !checkbox.checked) {
+              checkbox.click();
+              return 'clicked';
+            }
+            // Try to click the "I'm not a robot" button
+            const btn = document.querySelector('button[aria-label*="robot"], button[id*="challenge"]');
+            if (btn) {
+              btn.click();
+              return 'button_clicked';
+            }
+            // Try to submit any form on the page
+            const form = document.querySelector('form');
+            if (form) {
+              form.submit();
+              return 'form_submitted';
+            }
+            return 'no_challenge';
+          })();
+        `).catch(() => {});
+      };
+      // Inject after a short delay to let the page load
+      setTimeout(injectCfSolver, 1000);
     }
 
     if (!isAsync) return;
