@@ -258,6 +258,17 @@ export const PLAYER_SOURCES = [
     tvUrl: (_id, _season, _ep) => "https://allmanga.to",
   },
   {
+    id: "enma",
+    label: "Enma",
+    tag: "ANIME",
+    note: null,
+    supportsProgress: true,
+    async: true,
+    params: {},
+    movieUrl: (_id) => "https://enma.lol",
+    tvUrl: (_id, _season, _ep) => "https://enma.lol",
+  },
+  {
     id: "animepahe",
     label: "AnimePahe",
     tag: "ANIME",

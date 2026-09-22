@@ -142,6 +142,15 @@ const BUILTIN_ADDONS = [
     author: "Streambert",
     builtIn: true,
   },
+  {
+    id: "enma",
+    name: "Enma",
+    version: "1.0.0",
+    type: "stream-source",
+    description: "Stream anime from Enma (enma.lol)",
+    author: "Streambert",
+    builtIn: true,
+  },
 ];
 
 let _addons = new Map(); // id → addon object
