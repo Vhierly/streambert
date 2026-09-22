@@ -32,6 +32,8 @@ import SearchModal from "./components/SearchModal";
 import SetupScreen from "./components/SetupScreen";
 import CloseConfirmModal from "./components/CloseConfirmModal";
 import UpdateModal from "./components/UpdateModal";
+import WatchPartyModal from "./components/WatchPartyModal";
+import CustomMetadataModal from "./components/CustomMetadataModal";
 import { useGamepadNav } from "./utils/useGamepadNav";
 
 // Lazy-loaded pages: each chunk is only downloaded when the user first visits
@@ -56,6 +58,8 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [showSearch, setShowSearch] = useState(false);
   const [dlSearchOpen, setDlSearchOpen] = useState(false);
+  const [showWatchParty, setShowWatchParty] = useState(false);
+  const [showCustomMetadata, setShowCustomMetadata] = useState(false);
   const [librarySort, setLibrarySort] = useState(
     () => storage.get(STORAGE_KEYS.LIBRARY_SORT) || "manual",
   );
@@ -999,6 +1003,8 @@ export default function App() {
           page={page}
           onNavigate={navigate}
           onSearch={() => setShowSearch(true)}
+          onWatchParty={() => setShowWatchParty(true)}
+          onEditMetadata={() => setShowCustomMetadata(true)}
           savedList={savedList}
           activeDownloads={activeDownloadCount}
           onReorderSaved={handleReorderSaved}
@@ -1169,6 +1175,18 @@ export default function App() {
             onSelect={handleSelectResult}
             onClose={() => setShowSearch(false)}
             offline={offline}
+          />
+        )}
+        {showWatchParty && (
+          <WatchPartyModal
+            onClose={() => setShowWatchParty(false)}
+          />
+        )}
+        {showCustomMetadata && selected && (
+          <CustomMetadataModal
+            mediaType={selected.media_type}
+            item={selected}
+            onClose={() => setShowCustomMetadata(false)}
           />
         )}
         {updateBanner && (

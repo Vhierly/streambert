@@ -799,6 +799,378 @@ body.no-anim *::after {
     background: rgba(229, 9, 20, 0.1);
 }
 
+/* ── Watch Party ───────────────────────────────────────────────────────────── */
+.watch-party-setup {
+    padding: 20px;
+}
+
+.wp-input-group {
+    margin-bottom: 16px;
+}
+
+.wp-input-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+    margin-bottom: 6px;
+}
+
+.watch-party-active {
+    padding: 20px;
+}
+
+.wp-room-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    background: var(--surface2);
+    border-radius: 10px;
+    border: 1px solid var(--border);
+}
+
+.wp-room-code {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.wp-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.wp-code {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: 3px;
+    font-family: monospace;
+}
+
+.wp-participants-count {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    color: var(--text2);
+}
+
+.wp-participants {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.wp-participant {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    position: relative;
+}
+
+.wp-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--red);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.wp-name {
+    font-size: 11px;
+    color: var(--text2);
+    max-width: 50px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.wp-host-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    font-size: 9px;
+    font-weight: 700;
+    background: var(--red);
+    color: #fff;
+    padding: 2px 6px;
+    border-radius: 8px;
+}
+
+.wp-playback {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    background: var(--surface2);
+    border-radius: 10px;
+}
+
+.wp-playback-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--red);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.wp-progress {
+    flex: 1;
+}
+
+.wp-progress-bar {
+    height: 4px;
+    background: var(--surface3);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.wp-progress-fill {
+    height: 100%;
+    background: var(--red);
+    transition: width 0.3s;
+}
+
+.wp-time {
+    font-size: 12px;
+    color: var(--text3);
+    margin-top: 4px;
+    font-family: monospace;
+}
+
+.wp-chat {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.wp-chat-messages {
+    max-height: 160px;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.wp-chat-empty {
+    font-size: 13px;
+    color: var(--text3);
+    text-align: center;
+    padding: 20px;
+}
+
+.wp-chat-msg {
+    display: flex;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.wp-chat-sender {
+    font-weight: 600;
+    color: var(--red);
+    flex-shrink: 0;
+}
+
+.wp-chat-text {
+    color: var(--text);
+}
+
+.wp-chat-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--surface2);
+}
+
+.wp-chat-input input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 13px;
+    color: var(--text);
+}
+
+/* ── Custom Metadata Editor ────────────────────────────────────────────────── */
+.cm-poster-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 20px;
+    align-items: flex-start;
+}
+
+.cm-poster-preview {
+    width: 100px;
+    height: 150px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--surface2);
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+}
+
+.cm-poster-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.cm-poster-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--text3);
+}
+
+.cm-poster-input {
+    flex: 1;
+}
+
+.cm-poster-input label,
+.cm-field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+    margin-bottom: 6px;
+}
+
+.cm-field {
+    margin-bottom: 20px;
+}
+
+.cm-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.cm-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    font-size: 12px;
+    color: var(--text);
+}
+
+.cm-tag-remove {
+    background: none;
+    border: none;
+    color: var(--text3);
+    cursor: pointer;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1;
+}
+
+.cm-tag-remove:hover {
+    color: var(--red);
+}
+
+.cm-tag-input-row {
+    display: flex;
+    gap: 8px;
+}
+
+.cm-tag-input-row .apikey-input {
+    flex: 1;
+}
+
+.cm-original {
+    padding: 12px 16px;
+    background: var(--surface2);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    margin-bottom: 20px;
+}
+
+.cm-original-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+}
+
+.cm-original-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text2);
+}
+
+.cm-original-overview {
+    font-size: 12px;
+    color: var(--text3);
+    margin-top: 4px;
+    line-height: 1.5;
+}
+
+.cm-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+/* ── Modal box generic ────────────────────────────────────────────────────── */
+.modal-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+}
+
+.modal-header h2 {
+    font-family: var(--font-display);
+    font-size: 22px;
+    letter-spacing: 0.5px;
+    margin: 0;
+}
+
+.modal-sub {
+    font-size: 13px;
+    color: var(--text3);
+    margin: 4px 0 0;
+}
+
 .search-result {
     display: flex;
     align-items: center;

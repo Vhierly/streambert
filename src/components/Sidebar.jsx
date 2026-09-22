@@ -12,12 +12,16 @@ import {
   QuitIcon,
   BackIcon,
   HelpIcon,
+  UsersIcon,
+  TagIcon,
 } from "./Icons";
 
 export default function Sidebar({
   page,
   onNavigate,
   onSearch,
+  onWatchParty,
+  onEditMetadata,
   savedList,
   activeDownloads,
   onReorderSaved,
@@ -215,6 +219,20 @@ export default function Sidebar({
           </div>
         </div>
       )}
+
+      {/* Watch Party & Custom Metadata shortcuts */}
+      <div className="sidebar-section" style={{ padding: "8px 0" }}>
+        <SideBtn
+          onClick={onWatchParty}
+          icon={<UsersIcon />}
+          label="Watch Party"
+        />
+        <SideBtn
+          onClick={onEditMetadata}
+          icon={<TagIcon />}
+          label="Edit Metadata"
+        />
+      </div>
 
       <div className="sidebar-bottom">
         <SideBtn
