@@ -585,60 +585,9 @@ ipcMain.handle("server-get-items", async (_, libraryId) => {
   return [];
 });
 
-// ── In-app update IPC handlers ───────────────────────────────────────────────
-// Handles downloading and installing updates from the renderer (UpdateModal).
-const { autoUpdater } = require("electron-updater");
-const { download } = require("electron-dl");
-
-ipcMain.handle("detect-update-format", () => {
-  if (process.platform === "win32") return "exe";
-  if (process.platform === "linux") return "AppImage";
-  if (process.platform === "darwin") return "dmg";
-  return null;
-});
-
-ipcMain.handle("download-and-install-update", async (_, { url, format }) => {
-  if (!url) return { ok: false, error: "No download URL" };
-
-  const win = getMainWindow();
-  if (!win) return { ok: false, error: "No main window" };
-
-  // For Windows NSIS and macOS, use auto-updater
-  if (format === "exe" || format === "dmg") {
-    try {
-      autoUpdater.setFeedURL({ provider: "github", owner: "Vhierly", repo: "streambert" });
-      autoUpdater.checkForUpdates();
-      return { ok: true, message: "Update started via auto-updater" };
-    } catch (e) {
-      return { ok: false, error: e.message };
-    }
-  }
-
-  // For Linux AppImage / deb, download the file and prompt install
-  try {
-    const dlResult = await download(win, url, {
-      onProgress: (progress) => {
-        win.webContents.send("update-progress", progress);
-      },
-    });
-    // Open the downloaded file's folder
-    const filePath = dlResult.getSavePath();
-    const { shell } = require("electron");
-    shell.showItemInFolder(filePath);
-    return { ok: true, path: filePath, message: "Download complete — open folder to install" };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
-});
-
-ipcMain.handle("cancel-update", () => {
-  try {
-    autoUpdater.quitAndInstall();
-    return { ok: true };
-  } catch {
-    return { ok: true };
-  }
-});
+// ── In-app update IPC handlers (moved to src/ipc/player.js) ────────────────
+// NOTE: detect-update-format, download-and-install-update, and cancel-update
+// are registered in src/ipc/player.js — do NOT add them here again.
 
 // ── AI Recommendations IPC handlers ─────────────────────────────────────────
 ipcMain.handle("get-personalized-recommendations", async (_, { history, limit }) => {

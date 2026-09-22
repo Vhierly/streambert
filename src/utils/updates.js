@@ -3,8 +3,8 @@
 //
 // Supports multiple release sources (GitHub + Codeberg).
 
-export const GITHUB_REPO = "truelockmc/streambert";
-export const CODEBERG_REPO = "truelockmc/streambert";
+export const GITHUB_REPO = "Vhierly/streambert";
+export const CODEBERG_REPO = "Vhierly/streambert";
 
 // ── Source registry ───────────────────────────────────────────────────────────
 // Each entry just describes *where* to fetch from and how to build the
