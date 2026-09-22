@@ -129,14 +129,11 @@ export const PLAYER_SOURCES = [
     tag: null,
     note: null,
     supportsProgress: true,
-    colorParam: "color", // hex without # → e.g. "e50914"
-    langParam: null, // no subtitle lang param
-    params: {
-      overlay: "true",
-    },
+    colorParam: "color",
+    langParam: null,
+    params: { overlay: "true" },
     movieUrl: (id) => `https://player.videasy.to/movie/${id}`,
-    tvUrl: (id, season, ep) =>
-      `https://player.videasy.to/tv/${id}/${season}/${ep}`,
+    tvUrl: (id, season, ep) => `https://player.videasy.to/tv/${id}/${season}/${ep}`,
   },
   {
     id: "vidsrc",
@@ -144,13 +141,12 @@ export const PLAYER_SOURCES = [
     tag: null,
     note: null,
     supportsProgress: true,
-    progressViaFrames: true, // video is in a nested iframe, needs main-process frame query
-    colorParam: null, // vidsrc doesn't support color param
-    langParam: "ds_lang", // ISO 639-1 language code
+    progressViaFrames: true,
+    colorParam: null,
+    langParam: "ds_lang",
     params: {},
     movieUrl: (id) => `https://vsembed.su/embed/movie/${id}`,
-    tvUrl: (id, season, ep) =>
-      `https://vsembed.su/embed/tv/${id}/${season}/${ep}`,
+    tvUrl: (id, season, ep) => `https://vsembed.su/embed/tv/${id}/${season}/${ep}`,
   },
   {
     id: "vidking",
@@ -158,15 +154,98 @@ export const PLAYER_SOURCES = [
     tag: null,
     note: null,
     supportsProgress: true,
-    colorParam: "color", // hex without # → e.g. "e50914"
+    colorParam: "color",
     langParam: null,
-    params: {
-      autoPlay: "true",
-    },
+    params: { autoPlay: "true" },
     movieUrl: (id) => `https://www.vidking.net/embed/movie/${id}`,
-    tvUrl: (id, season, ep) =>
-      `https://www.vidking.net/embed/tv/${id}/${season}/${ep}`,
+    tvUrl: (id, season, ep) => `https://www.vidking.net/embed/tv/${id}/${season}/${ep}`,
   },
+  // ── Alternative embed providers (no API key required) ──────────────────────
+  {
+    id: "vidlink",
+    label: "VidLink",
+    tag: null,
+    note: null,
+    supportsProgress: true,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://vidlink.pro/movie/${id}`,
+    tvUrl: (id, season, ep) => `https://vidlink.pro/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidspark",
+    label: "VidSpark",
+    tag: null,
+    note: null,
+    supportsProgress: true,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://vidspark.to/movie/${id}`,
+    tvUrl: (id, season, ep) => `https://vidspark.to/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidfast",
+    label: "VidFast",
+    tag: null,
+    note: null,
+    supportsProgress: true,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://vidfast.vc/movie/${id}`,
+    tvUrl: (id, season, ep) => `https://vidfast.vc/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidcore",
+    label: "VidCore",
+    tag: null,
+    note: null,
+    supportsProgress: true,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://vidcore.org/embed/movie/${id}`,
+    tvUrl: (id, season, ep) => `https://vidcore.org/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidphantom",
+    label: "VidPhantom",
+    tag: null,
+    note: null,
+    supportsProgress: true,
+    colorParam: "primaryColor",
+    langParam: null,
+    params: { autoplay: "true" },
+    movieUrl: (id) => `https://vidphantom.com/movie/${id}`,
+    tvUrl: (id, season, ep) => `https://vidphantom.com/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "cinextream",
+    label: "CineXtream",
+    tag: null,
+    note: null,
+    supportsProgress: true,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://cinextream.cc/api/embed/movie/${id}`,
+    tvUrl: (id, season, ep) => `https://cinextream.cc/api/embed/tv/${id}/${season}/${ep}`,
+  },
+  {
+    id: "vidsrc3",
+    label: "VidSrc3",
+    tag: null,
+    note: null,
+    supportsProgress: true,
+    colorParam: null,
+    langParam: null,
+    params: { autoplay: "true" },
+    movieUrl: (id) => `https://vidsrc3.created.app/embed/movie/${id}`,
+    tvUrl: (id, season, ep) => `https://vidsrc3.created.app/embed/tv/${id}/${season}/${ep}`,
+  },
+  // ── Anime source ──────────────────────────────────────────────────────────
   {
     id: "allmanga",
     label: "AllManga",
@@ -451,7 +530,7 @@ export const isAnimeContent = (item, details) => {
 
 // Default sources
 export const ANIME_DEFAULT_SOURCE = "allmanga";
-export const NON_ANIME_DEFAULT_SOURCE = "vidking";
+export const NON_ANIME_DEFAULT_SOURCE = "vidsrc";
 
 // ── Episode Group fetch (localStorage + in-memory cache, 7-day TTL) ─────────
 // Episode groups almost never change -> cache aggressively across sessions.
