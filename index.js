@@ -326,30 +326,41 @@ playerIpc.register(getMainWindow, {
 blockStats.init(getMainWindow);
 discordRpc.register(ipcMain);
 
-// ── Trakt.tv IPC handlers ────────────────────────────────────────────────────
-// Trakt API calls go through the main process to avoid CORS issues and keep
-// tokens secure. The renderer stores tokens in localStorage but delegates
-// all network calls here.
-ipcMain.handle("trakt-start-device-auth", async () => {
-  const res = await fetch("https://trakt.tv/oauth/device/code", {
+// ── Trakt.tv IPC handlers (main process — avoids CORS) ───────────────────────
+// All Trakt OAuth + API calls run here, tokens stay in renderer localStorage.
+
+const TRAKT_CLIENT_ID = process.env.TRAKT_CLIENT_ID || ""; // Set via env or leave empty for user-provided
+
+ipcMain.handle("trakt-get-pin", async () => {
+  if (!TRAKT_CLIENT_ID) {
+    return { ok: false, error: "No Trakt client_id configured. Set TRAKT_CLIENT_ID env var or use the PIN flow with your own client_id." };
+  }
+  const res = await fetch("https://trakt.tv/oauth/pin", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ client_id: "streambert" }),
+    body: JSON.stringify({ client_id: TRAKT_CLIENT_ID }),
   });
-  if (!res.ok) throw new Error("Trakt device auth failed");
-  return res.json();
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    return { ok: false, error: err.message || `Trakt PIN request failed (${res.status})` };
+  }
+  const data = await res.json();
+  return { ok: true, ...data };
 });
 
-ipcMain.handle("trakt-poll-device-auth", async (_, { deviceCode, interval = 5 }) => {
-  const maxAttempts = Math.floor(900 / interval);
+ipcMain.handle("trakt-poll-pin", async (_, { pin, interval = 5 }) => {
+  if (!TRAKT_CLIENT_ID) {
+    return { ok: false, error: "No Trakt client_id configured" };
+  }
+  const maxAttempts = Math.floor(600 / interval);
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise((r) => setTimeout(r, interval * 1000));
-    const res = await fetch("https://trakt.tv/oauth/device/token", {
+    const res = await fetch("https://trakt.tv/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        code: deviceCode,
-        client_id: "streambert",
+        code: pin,
+        client_id: TRAKT_CLIENT_ID,
         client_secret: "",
       }),
     });
@@ -359,7 +370,50 @@ ipcMain.handle("trakt-poll-device-auth", async (_, { deviceCode, interval = 5 })
     }
     const err = await res.json().catch(() => ({}));
     if (err.error === "authorization_pending") continue;
-    if (err.error === "expired_token") return { ok: false, error: "Code expired" };
+    if (err.error === "expired_token") return { ok: false, error: "PIN expired" };
+    if (err.error === "access_denied") return { ok: false, error: "Denied" };
+    return { ok: false, error: err.error || "Unknown error" };
+  }
+  return { ok: false, error: "Timeout" };
+});
+
+// User-provided client_id flow (for users who registered their own Trakt app)
+ipcMain.handle("trakt-get-pin-custom", async (_, { clientId }) => {
+  if (!clientId) return { ok: false, error: "client_id required" };
+  const res = await fetch("https://trakt.tv/oauth/pin", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: clientId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    return { ok: false, error: err.message || `Trakt PIN request failed (${res.status})` };
+  }
+  const data = await res.json();
+  return { ok: true, ...data };
+});
+
+ipcMain.handle("trakt-poll-pin-custom", async (_, { pin, clientId, interval = 5 }) => {
+  if (!clientId) return { ok: false, error: "client_id required" };
+  const maxAttempts = Math.floor(600 / interval);
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, interval * 1000));
+    const res = await fetch("https://trakt.tv/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: pin,
+        client_id: clientId,
+        client_secret: "",
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return { ok: true, ...data };
+    }
+    const err = await res.json().catch(() => ({}));
+    if (err.error === "authorization_pending") continue;
+    if (err.error === "expired_token") return { ok: false, error: "PIN expired" };
     if (err.error === "access_denied") return { ok: false, error: "Denied" };
     return { ok: false, error: err.error || "Unknown error" };
   }
@@ -367,13 +421,31 @@ ipcMain.handle("trakt-poll-device-auth", async (_, { deviceCode, interval = 5 })
 });
 
 ipcMain.handle("trakt-logout", () => {
-  // Renderer clears localStorage; nothing to do in main
   return { ok: true };
 });
 
 ipcMain.handle("trakt-is-connected", () => {
-  // Renderer checks localStorage; this is a fallback
   return false;
+});
+
+// Generic Trakt API proxy (renderer → main → Trakt) to avoid CORS
+ipcMain.handle("trakt-api", async (_, { method, path, body }) => {
+  const url = `https://api.trakt.tv${path}`;
+  const res = await fetch(url, {
+    method: method || "GET",
+    headers: {
+      "Content-Type": "application/json",
+      "trakt-api-version": "2",
+      "trakt-api-key": TRAKT_CLIENT_ID,
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    return { ok: false, status: res.status, error: err.message || `Trakt ${res.status}` };
+  }
+  const data = await res.json();
+  return { ok: true, data };
 });
 
 // ── Smart Downloads IPC handlers ──────────────────────────────────────────────

@@ -194,13 +194,18 @@ contextBridge.exposeInMainWorld("electron", {
   discordRpcUpdateActivity: (activity) =>
     ipcRenderer.invoke("discord-rpc-update-activity", activity),
 
-  // Trakt.tv integration
-  traktStartDeviceAuth: () =>
-    ipcRenderer.invoke("trakt-start-device-auth"),
-  traktPollDeviceAuth: (deviceCode, interval) =>
-    ipcRenderer.invoke("trakt-poll-device-auth", { deviceCode, interval }),
+  // Trakt.tv integration (PIN-based OAuth flow)
+  traktGetPin: () => ipcRenderer.invoke("trakt-get-pin"),
+  traktPollPin: (pin, interval) =>
+    ipcRenderer.invoke("trakt-poll-pin", { pin, interval }),
+  traktGetPinCustom: (clientId) =>
+    ipcRenderer.invoke("trakt-get-pin-custom", { clientId }),
+  traktPollPinCustom: (pin, clientId, interval) =>
+    ipcRenderer.invoke("trakt-poll-pin-custom", { pin, clientId, interval }),
   traktLogout: () => ipcRenderer.invoke("trakt-logout"),
   traktIsConnected: () => ipcRenderer.invoke("trakt-is-connected"),
+  traktApi: (method, path, body) =>
+    ipcRenderer.invoke("trakt-api", { method, path, body }),
 
   // Smart Downloads queue management
   getSmartDownloadSettings: () =>

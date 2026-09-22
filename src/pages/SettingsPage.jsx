@@ -1856,9 +1856,12 @@ function StartPageSection() {
 function TraktSection() {
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [deviceCode, setDeviceCode] = useState(null);
+  const [pinData, setPinData] = useState(null);
   const [error, setError] = useState(null);
   const [saved, setSaved] = useState(false);
+  const [customClientId, setCustomClientId] = useState("");
+  const [useCustom, setUseCustom] = useState(false);
+  const [status, setStatus] = useState(null);
 
   useEffect(() => {
     import("../utils/trakt").then((m) => {
@@ -1869,20 +1872,38 @@ function TraktSection() {
   const handleConnect = async () => {
     setConnecting(true);
     setError(null);
+    setStatus(null);
     try {
       const m = await import("../utils/trakt");
-      const device = await m.traktStartDeviceAuth();
-      setDeviceCode(device);
-      // Poll for completion
-      const result = await m.traktPollDeviceAuth(device.device_code, device.interval || 5);
-      if (result.ok) {
+      const result = useCustom && customClientId
+        ? await m.traktGetPinCustom(customClientId)
+        : await m.traktGetPin();
+      if (!result.ok) {
+        setError(result.error || "Failed to get PIN");
+        setConnecting(false);
+        return;
+      }
+      setPinData(result);
+      setStatus("Waiting for authorization...");
+
+      // Poll for token
+      const pollResult = useCustom && customClientId
+        ? await m.traktPollPinCustom(result.pin, customClientId, result.interval || 5)
+        : await m.traktPollPin(result.pin, result.interval || 5);
+
+      if (pollResult.ok) {
         setConnected(true);
-        setDeviceCode(null);
+        setPinData(null);
+        setStatus(null);
       } else {
-        setError(result.error || "Connection failed");
+        setError(pollResult.error || "Connection failed");
+        setPinData(null);
+        setStatus(null);
       }
     } catch (e) {
       setError(e.message || "Connection failed");
+      setPinData(null);
+      setStatus(null);
     } finally {
       setConnecting(false);
     }
@@ -1936,16 +1957,58 @@ function TraktSection() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* Custom client_id toggle */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <input
+              type="checkbox"
+              id="trakt-custom"
+              checked={useCustom}
+              onChange={(e) => setUseCustom(e.target.checked)}
+              style={{ width: 16, height: 16 }}
+            />
+            <label
+              htmlFor="trakt-custom"
+              style={{ fontSize: 13, color: "var(--text2)", cursor: "pointer" }}
+            >
+              Use my own Trakt client_id
+            </label>
+          </div>
+
+          {useCustom && (
+            <div>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "var(--text2)",
+                  marginBottom: 6,
+                }}
+              >
+                Trakt Client ID
+              </div>
+              <input
+                type="text"
+                className="apikey-input"
+                placeholder="Enter your Trakt application client_id"
+                value={customClientId}
+                onChange={(e) => setCustomClientId(e.target.value)}
+              />
+              <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 4 }}>
+                Register at trakt.tv/oauth/applications to get your client_id
+              </div>
+            </div>
+          )}
+
           <button
             className="btn btn-primary"
-            disabled={connecting}
+            disabled={connecting || (useCustom && !customClientId)}
             onClick={handleConnect}
             style={{ opacity: connecting ? 0.6 : 1 }}
           >
             {connecting ? "Connecting…" : "Connect Trakt.tv"}
           </button>
 
-          {deviceCode && (
+          {pinData && (
             <div
               style={{
                 padding: "14px 18px",
@@ -1956,28 +2019,32 @@ function TraktSection() {
               }}
             >
               <div style={{ marginBottom: 8, color: "var(--text2)" }}>
-                Enter this code at{" "}
+                Enter this PIN at{" "}
                 <a
-                  href={deviceCode.verification_url}
+                  href={pinData.verification_url}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{ color: "var(--red)", textDecoration: "underline" }}
                 >
-                  {deviceCode.verification_url}
+                  {pinData.verification_url}
                 </a>
               </div>
               <div
                 style={{
-                  fontSize: 24,
+                  fontSize: 28,
                   fontWeight: 700,
-                  letterSpacing: 4,
+                  letterSpacing: 6,
                   color: "var(--text)",
                   fontFamily: "monospace",
                 }}
               >
-                {deviceCode.user_code}
+                {pinData.pin}
               </div>
             </div>
+          )}
+
+          {status && (
+            <div style={{ fontSize: 13, color: "#ff9800" }}>{status}</div>
           )}
 
           {error && (

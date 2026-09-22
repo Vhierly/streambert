@@ -1,13 +1,15 @@
 // ── Trakt.tv API Integration ──────────────────────────────────────────────────
 // Docs: https://trakt.docs.apiary.io
-// OAuth flow: https://trakt.tv/oauth/applications
+// All API calls go through Electron main process to avoid CORS.
+// Renderer should use window.electron.trakt* IPC methods, not call these directly.
 
 const TRAKT_BASE = "https://api.trakt.tv";
 const TRAKT_OAUTH = "https://trakt.tv/oauth";
 
-// Client ID from Streambert's Trakt app (public, for open-source apps)
-// Users can override with their own via settings
-const DEFAULT_CLIENT_ID = "streambert";
+// IMPORTANT: Replace with a real Trakt.tv application client_id.
+// Register at https://trakt.tv/oauth/applications to get your own.
+// The PIN flow only needs client_id (no client_secret required).
+const DEFAULT_CLIENT_ID = ""; // Users must provide their own
 
 let _clientId = DEFAULT_CLIENT_ID;
 let _accessToken = null;
@@ -55,30 +57,56 @@ export const traktIsConnected = () => {
   return !!_accessToken && (!_tokenExpiresAt || Date.now() < _tokenExpiresAt);
 };
 
-// ── OAuth Device Flow (no browser popup needed) ───────────────────────────────
-// Returns a device code for the user to enter at trakt.tv/activate
-export const traktStartDeviceAuth = async () => {
-  const res = await fetch(`${TRAKT_OAUTH}/device/code`, {
+export const traktGetClientId = () => _clientId;
+
+export const traktSetClientId = (id) => {
+  _clientId = id;
+  saveTokens();
+};
+
+// ── PIN-based OAuth Flow (renderer → main process via IPC) ─────────────────
+// All OAuth calls go through Electron main process to avoid CORS.
+// Falls back to direct fetch only in non-Electron (web dev) environments.
+
+// Step 1: Get a PIN code from Trakt (requires valid client_id)
+export const traktGetPin = async () => {
+  // Prefer IPC (Electron main process)
+  if (window.electron?.traktGetPin) {
+    return window.electron.traktGetPin();
+  }
+  // Fallback for non-Electron (web dev)
+  if (!_clientId) {
+    throw new Error("Trakt client_id not configured. Set it in Settings → Trakt.tv → Advanced.");
+  }
+  const res = await fetch(`${TRAKT_OAUTH}/pin`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ client_id: _clientId }),
   });
-  if (!res.ok) throw new Error("Trakt device auth failed");
-  return res.json(); // { user_code, device_code, expires_in, interval, verification_url }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Trakt PIN request failed (${res.status})`);
+  }
+  return res.json();
 };
 
-export const traktPollDeviceAuth = async (deviceCode, interval = 5) => {
-  // Poll until user authorizes or timeout
-  const maxAttempts = Math.floor(900 / interval); // 15 min max
+// Step 2: Poll for token after user enters PIN at trakt.tv/pin
+export const traktPollPin = async (pin, interval = 5) => {
+  // Prefer IPC (Electron main process)
+  if (window.electron?.traktPollPin) {
+    return window.electron.traktPollPin(pin, interval);
+  }
+  // Fallback for non-Electron
+  const maxAttempts = Math.floor(600 / interval);
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise((r) => setTimeout(r, interval * 1000));
-    const res = await fetch(`${TRAKT_OAUTH}/device/token`, {
+    const res = await fetch(`${TRAKT_OAUTH}/token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        code: deviceCode,
+        code: pin,
         client_id: _clientId,
-        client_secret: "", // Public app — no secret
+        client_secret: "",
       }),
     });
     if (res.ok) {
@@ -91,14 +119,66 @@ export const traktPollDeviceAuth = async (deviceCode, interval = 5) => {
     }
     const err = await res.json().catch(() => ({}));
     if (err.error === "authorization_pending") continue;
-    if (err.error === "expired_token") return { ok: false, error: "Code expired" };
+    if (err.error === "expired_token") return { ok: false, error: "PIN expired" };
     if (err.error === "access_denied") return { ok: false, error: "Denied" };
     return { ok: false, error: err.error || "Unknown error" };
   }
   return { ok: false, error: "Timeout" };
 };
 
-// ── API Helpers ───────────────────────────────────────────────────────────────
+// Custom client_id flow (user provides their own Trakt app credentials)
+export const traktGetPinCustom = async (clientId) => {
+  if (window.electron?.traktGetPinCustom) {
+    return window.electron.traktGetPinCustom(clientId);
+  }
+  if (!clientId) throw new Error("client_id required");
+  const res = await fetch(`${TRAKT_OAUTH}/pin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: clientId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Trakt PIN request failed (${res.status})`);
+  }
+  return res.json();
+};
+
+export const traktPollPinCustom = async (pin, clientId, interval = 5) => {
+  if (window.electron?.traktPollPinCustom) {
+    return window.electron.traktPollPinCustom(pin, clientId, interval);
+  }
+  if (!clientId) throw new Error("client_id required");
+  const maxAttempts = Math.floor(600 / interval);
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, interval * 1000));
+    const res = await fetch(`${TRAKT_OAUTH}/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: pin,
+        client_id: clientId,
+        client_secret: "",
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      _accessToken = data.access_token;
+      _refreshToken = data.refresh_token;
+      _tokenExpiresAt = Date.now() + data.expires_in * 1000;
+      saveTokens();
+      return { ok: true };
+    }
+    const err = await res.json().catch(() => ({}));
+    if (err.error === "authorization_pending") continue;
+    if (err.error === "expired_token") return { ok: false, error: "PIN expired" };
+    if (err.error === "access_denied") return { ok: false, error: "Denied" };
+    return { ok: false, error: err.error || "Unknown error" };
+  }
+  return { ok: false, error: "Timeout" };
+};
+
+// ── API Helpers (called from main process via IPC) ───────────────────────────
 const traktHeaders = () => ({
   "Content-Type": "application/json",
   Authorization: `Bearer ${_accessToken}`,
@@ -107,6 +187,24 @@ const traktHeaders = () => ({
 });
 
 const traktFetch = async (path, options = {}) => {
+  // In Electron, proxy through the main process to avoid CORS
+  if (window.electron?.traktApi) {
+    const result = await window.electron.traktApi(
+      options.method || "GET",
+      path,
+      options.body
+    );
+    if (!result.ok) {
+      if (result.status === 401) {
+        traktLogout();
+        throw new Error("Trakt auth expired");
+      }
+      throw new Error(result.error || `Trakt ${result.status}`);
+    }
+    return result.data;
+  }
+
+  // Fallback for non-Electron (web dev)
   loadTokens();
   if (!_accessToken) throw new Error("Not connected to Trakt");
   const res = await fetch(`${TRAKT_BASE}${path}`, {
@@ -114,7 +212,6 @@ const traktFetch = async (path, options = {}) => {
     headers: { ...traktHeaders(), ...(options.headers || {}) },
   });
   if (res.status === 401) {
-    // Token expired — try refresh
     if (_refreshToken) {
       const refreshed = await traktRefreshToken();
       if (refreshed) return traktFetch(path, options);
