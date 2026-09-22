@@ -213,6 +213,38 @@ contextBridge.exposeInMainWorld("electron", {
   removeFromQueue: (id) => ipcRenderer.invoke("remove-from-queue", id),
   updateQueueItem: (id, updates) =>
     ipcRenderer.invoke("update-queue-item", { id, updates }),
+
+  // Mini Player (always-on-top window)
+  openMiniPlayer: (url, title) =>
+    ipcRenderer.invoke("open-mini-player", { url, title }),
+  closeMiniPlayer: () => ipcRenderer.invoke("close-mini-player"),
+  setMiniPlayerSize: (width, height) =>
+    ipcRenderer.invoke("set-mini-player-size", { width, height }),
+  setMiniPlayerAlwaysOnTop: (enabled) =>
+    ipcRenderer.invoke("set-mini-player-always-on-top", enabled),
+
+  // Addon system
+  getAddonGallery: () => ipcRenderer.invoke("get-addon-gallery"),
+  toggleAddon: (id, enabled) =>
+    ipcRenderer.invoke("toggle-addon", { id, enabled }),
+  getBuiltinAddons: () => ipcRenderer.invoke("get-builtin-addons"),
+
+  // Server client (Jellyfin/Plex)
+  getServerConfig: () => ipcRenderer.invoke("get-server-config"),
+  setServerConfig: (config) =>
+    ipcRenderer.invoke("set-server-config", config),
+  clearServerConfig: () => ipcRenderer.invoke("clear-server-config"),
+  serverGetLibraries: () => ipcRenderer.invoke("server-get-libraries"),
+  serverGetItems: (libraryId) =>
+    ipcRenderer.invoke("server-get-items", libraryId),
+
+  // AI Recommendations
+  getPersonalizedRecommendations: (history, limit) =>
+    ipcRenderer.invoke("get-personalized-recommendations", { history, limit }),
+  analyzeWatchHistory: (history) =>
+    ipcRenderer.invoke("analyze-watch-history", { history }),
+  getMoodRecommendations: (mood, limit) =>
+    ipcRenderer.invoke("get-mood-recommendations", { mood, limit }),
 });
 
 if (process.platform === "darwin") {

@@ -409,6 +409,126 @@ ipcMain.handle("update-queue-item", (_, { id, updates }) => {
   return { ok: true };
 });
 
+// ── Mini Player (always-on-top window) ──────────────────────────────────────
+let miniPlayerWindow = null;
+
+ipcMain.handle("open-mini-player", async (_, { url, title }) => {
+  if (!url) return { ok: false, reason: "no-url" };
+
+  if (miniPlayerWindow && !miniPlayerWindow.isDestroyed()) {
+    miniPlayerWindow.loadURL(url);
+    miniPlayerWindow.focus();
+    return { ok: true, windowId: miniPlayerWindow.webContents.id };
+  }
+
+  miniPlayerWindow = new BrowserWindow({
+    width: 480,
+    height: 270,
+    minWidth: 320,
+    minHeight: 180,
+    alwaysOnTop: true,
+    title: title ? `${title} - Mini Player` : "Mini Player",
+    backgroundColor: "#000000",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+    frame: process.platform !== "win32",
+    webPreferences: {
+      partition: "persist:player",
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  miniPlayerWindow.loadURL(url);
+
+  miniPlayerWindow.on("closed", () => {
+    miniPlayerWindow = null;
+  });
+
+  return { ok: true, windowId: miniPlayerWindow.webContents.id };
+});
+
+ipcMain.handle("close-mini-player", () => {
+  if (miniPlayerWindow && !miniPlayerWindow.isDestroyed()) {
+    miniPlayerWindow.close();
+  }
+  return { ok: true };
+});
+
+ipcMain.handle("set-mini-player-size", (_, { width, height }) => {
+  if (miniPlayerWindow && !miniPlayerWindow.isDestroyed()) {
+    miniPlayerWindow.setSize(width, height);
+    return { ok: true };
+  }
+  return { ok: false, reason: "no-window" };
+});
+
+ipcMain.handle("set-mini-player-always-on-top", (_, enabled) => {
+  if (miniPlayerWindow && !miniPlayerWindow.isDestroyed()) {
+    miniPlayerWindow.setAlwaysOnTop(enabled);
+    return { ok: true };
+  }
+  return { ok: false, reason: "no-window" };
+});
+
+// ── Addon system IPC handlers ───────────────────────────────────────────────
+ipcMain.handle("get-addon-gallery", () => {
+  // Renderer handles this via addons.js
+  return [];
+});
+
+ipcMain.handle("toggle-addon", (_, { id, enabled }) => {
+  // Renderer handles this via addons.js
+  return { ok: true };
+});
+
+ipcMain.handle("get-builtin-addons", () => {
+  // Renderer handles this via addons.js
+  return [];
+});
+
+// ── Server client IPC handlers ──────────────────────────────────────────────
+ipcMain.handle("get-server-config", () => {
+  // Renderer handles this via serverClient.js
+  return null;
+});
+
+ipcMain.handle("set-server-config", (_, config) => {
+  // Renderer handles this via serverClient.js
+  return { ok: true };
+});
+
+ipcMain.handle("clear-server-config", () => {
+  // Renderer handles this via serverClient.js
+  return { ok: true };
+});
+
+ipcMain.handle("server-get-libraries", async () => {
+  // Would call Jellyfin/Plex API via main process
+  // For now, return empty (renderer handles via serverClient.js)
+  return [];
+});
+
+ipcMain.handle("server-get-items", async (_, libraryId) => {
+  // Would call Jellyfin/Plex API via main process
+  return [];
+});
+
+// ── AI Recommendations IPC handlers ─────────────────────────────────────────
+ipcMain.handle("get-personalized-recommendations", async (_, { history, limit }) => {
+  // Would call TMDB API with genre affinity from history
+  return [];
+});
+
+ipcMain.handle("analyze-watch-history", (_, { history }) => {
+  // Renderer handles this via aiRecommendations.js
+  return {};
+});
+
+ipcMain.handle("get-mood-recommendations", (_, { mood, limit }) => {
+  // Renderer handles this via aiRecommendations.js
+  return {};
+});
+
 // get-block-stats lives with its data
 ipcMain.handle("get-block-stats", () => blockStats.getBlockStats());
 

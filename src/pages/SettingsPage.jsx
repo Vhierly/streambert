@@ -3477,6 +3477,297 @@ function SettingsTopBar({ sectionRefs, contentRef }) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
+// ── Jellyfin/Plex Server Client ──────────────────────────────────────────────
+function ServerClientSection() {
+  const [serverType, setServerType] = useState("jellyfin");
+  const [serverUrl, setServerUrl] = useState("");
+  const [serverToken, setServerToken] = useState("");
+  const [connected, setConnected] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [error, setError] = useState(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    import("../utils/serverClient").then((m) => {
+      const config = m.getServerConfig();
+      if (config) {
+        setServerType(config.type || "jellyfin");
+        setServerUrl(config.url || "");
+        setServerToken(config.token || "");
+        setConnected(true);
+      }
+    });
+  }, []);
+
+  const handleConnect = async () => {
+    setTesting(true);
+    setError(null);
+    try {
+      const m = await import("../utils/serverClient");
+      m.setServerConfig({ type: serverType, url: serverUrl, token: serverToken });
+      setConnected(true);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setError(e.message || "Connection failed");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    const m = await import("../utils/serverClient");
+    m.clearServerConfig();
+    setConnected(false);
+    setServerUrl("");
+    setServerToken("");
+  };
+
+  return (
+    <div style={{ marginBottom: 40 }}>
+      <div className="settings-section-title">Jellyfin / Plex Client</div>
+      <div
+        style={{
+          fontSize: 13,
+          color: "var(--text3)",
+          marginBottom: 20,
+          lineHeight: 1.6,
+        }}
+      >
+        Connect to a local Jellyfin or Plex server to stream from your own media
+        library. Supports browsing, playback progress sync, and direct play.
+      </div>
+
+      {connected ? (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "14px 18px",
+            background: "rgba(72, 199, 116, 0.08)",
+            border: "1px solid rgba(72, 199, 116, 0.3)",
+            borderRadius: 10,
+          }}
+        >
+          <span style={{ fontSize: 14, color: "#48c774", fontWeight: 600 }}>
+            ✓ Connected to {serverType === "jellyfin" ? "Jellyfin" : "Plex"} server
+          </span>
+          <button
+            className="btn btn-ghost"
+            style={{ marginLeft: "auto", fontSize: 13 }}
+            onClick={handleDisconnect}
+          >
+            Disconnect
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--text2)",
+                marginBottom: 6,
+              }}
+            >
+              Server Type
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[
+                { id: "jellyfin", label: "Jellyfin" },
+                { id: "plex", label: "Plex" },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  className={
+                    serverType === t.id ? "btn btn-primary" : "btn btn-ghost"
+                  }
+                  style={{ padding: "7px 18px", fontSize: 13 }}
+                  onClick={() => setServerType(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--text2)",
+                marginBottom: 6,
+              }}
+            >
+              Server URL
+            </div>
+            <input
+              type="text"
+              className="apikey-input"
+              placeholder="http://192.168.1.100:8096"
+              value={serverUrl}
+              onChange={(e) => setServerUrl(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--text2)",
+                marginBottom: 6,
+              }}
+            >
+              API Token
+            </div>
+            <input
+              type="password"
+              className="apikey-input"
+              placeholder="Enter your API token"
+              value={serverToken}
+              onChange={(e) => setServerToken(e.target.value)}
+            />
+          </div>
+
+          <button
+            className="btn btn-primary"
+            disabled={testing || !serverUrl || !serverToken}
+            onClick={handleConnect}
+            style={{ opacity: testing ? 0.6 : 1 }}
+          >
+            {testing ? "Connecting…" : "Connect"}
+          </button>
+
+          {error && (
+            <div style={{ fontSize: 13, color: "var(--red)" }}>✕ {error}</div>
+          )}
+        </div>
+      )}
+
+      {saved && (
+        <span style={{ fontSize: 13, color: "#48c774", marginTop: 8 }}>
+          ✓ Saved
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── Addon Gallery ───────────────────────────────────────────────────────────
+function AddonGallerySection() {
+  const [addons, setAddons] = useState([]);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    import("../utils/addons").then((m) => {
+      setAddons(m.getAddonGallery());
+    });
+  }, []);
+
+  const handleToggle = async (id, currentStatus) => {
+    const m = await import("../utils/addons");
+    const enabled = currentStatus !== "active";
+    m.toggleAddon(id, enabled);
+    setAddons(m.getAddonGallery());
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  return (
+    <div style={{ marginBottom: 40 }}>
+      <div className="settings-section-title">Addons</div>
+      <div
+        style={{
+          fontSize: 13,
+          color: "var(--text3)",
+          marginBottom: 20,
+          lineHeight: 1.6,
+        }}
+      >
+        Manage streaming sources and metadata providers. Built-in addons cannot
+        be disabled.
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {addons.map((addon) => (
+          <div
+            key={addon.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              padding: "12px 16px",
+              background: "var(--surface2)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+            }}
+          >
+            <div style={{ flex: 1 }}>
+              <div
+                style={{
+                  fontSize: 14,
+                  fontWeight: 600,
+                  color: "var(--text)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                {addon.name}
+                {addon.builtIn && (
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: "var(--text3)",
+                      background: "var(--surface3)",
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                    }}
+                  >
+                    BUILT-IN
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
+                {addon.description}
+              </div>
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color:
+                  addon.status === "active" ? "#48c774" : "var(--text3)",
+                fontWeight: 500,
+              }}
+            >
+              {addon.status === "active" ? "● Active" : "○ Disabled"}
+            </div>
+            {!addon.builtIn && (
+              <button
+                className="btn btn-ghost"
+                onClick={() => handleToggle(addon.id, addon.status)}
+              >
+                {addon.status === "active" ? "Disable" : "Enable"}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {saved && (
+        <span style={{ fontSize: 13, color: "#48c774", marginTop: 8 }}>
+          ✓ Saved
+        </span>
+      )}
+    </div>
+  );
+}
+
 // ── Smart Downloads Section ───────────────────────────────────────────────────
 function SmartDownloadsSection() {
   const [enabled, setEnabled] = useState(false);
@@ -4725,6 +5016,10 @@ export default function SettingsPage({
           <Divider />
 
           <SmartDownloadsSection />
+          <Divider />
+          <ServerClientSection />
+          <Divider />
+          <AddonGallerySection />
         </div>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
