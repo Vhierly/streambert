@@ -14,6 +14,7 @@ import {
   getSourceUrl,
   sourceSupportsProgress,
   getAllSources,
+  buildSourceUrl,
   sourceProgressViaFrames,
   sourceIsAsync,
   fetchAnilistData,
@@ -333,10 +334,22 @@ export default function MoviePage({
     if (!playing) return;
     const epKey = `movie_${item.id}_${dubMode}`;
 
-    // Only AllManga and Enma use IPC resolvers
-    if (playerSource !== "allmanga" && playerSource !== "enma") {
-      // Build URL directly for other sources
-      const url = getSourceUrl(playerSource, "movie", item.id, 1, 1, {}, playerAccentColor, playerSubLang);
+    // Only AllManga uses the GraphQL IPC resolver.
+    // All other sources load their URL directly via buildSourceUrl
+    // (uses searchUrl for SPA sources like Enma, AnimePahe, Gogo, Aniwatch, 9Anime)
+    if (playerSource !== "allmanga") {
+      const title = item.title || item.name || "";
+      const url = buildSourceUrl(
+        playerSource,
+        "movie",
+        item.id,
+        1,
+        1,
+        {},
+        playerAccentColor,
+        playerSubLang,
+        title,
+      );
       resolvedPlayerUrlRef.current = url;
       setResolvedPlayerUrl(url);
       setResolvingUrl(false);
@@ -368,39 +381,6 @@ export default function MoviePage({
     setResolveError(null);
     const startTime = storage.get("dlTime_" + progressKey) || 0;
     let mounted = true;
-
-    // Enma: resolve URL via main-process IPC
-    if (playerSource === "enma") {
-      const movieTitle = item.title || item.name || "";
-      window.electron
-        .resolveEnma({ title: movieTitle, episode: 1 })
-        .then((res) => {
-          if (!mounted) return;
-          if (res?.ok && res.url) {
-            clearFailoverSource(epKey);
-            resolvedPlayerUrlRef.current = res.url;
-            setResolvedPlayerUrl(res.url);
-            setResolvingUrl(false);
-            resolvingUrlRef.current = false;
-          } else {
-            setResolveError(res?.error || "Movie not found on Enma");
-            setResolvingUrl(false);
-            resolvingUrlRef.current = false;
-          }
-        })
-        .catch((e) => {
-          if (mounted) setResolveError(e.message || "Enma search failed");
-          setResolvingUrl(false);
-          resolvingUrlRef.current = false;
-        })
-        .finally(() => {
-          if (mounted) {
-            resolvingUrlRef.current = false;
-            setResolvingUrl(false);
-          }
-        });
-      return;
-    }
 
     // AllManga: resolve via GraphQL IPC
     window.electron

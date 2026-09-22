@@ -30,6 +30,7 @@ import {
   NEEDS_INTERCEPT,
   getNextNonAsyncSource,
   getAllSources,
+  buildSourceUrl,
 } from "../utils/api";
 import {
   BookmarkIcon,
@@ -781,12 +782,12 @@ export default function TVPage({
       setTimeout(injectCfSolver, 3000);
     }
 
-    // Only AllManga and Enma use IPC resolvers.
-    // Other anime sources (AnimePahe, Gogoanime, Aniwatch, 9Anime) load
-    // their embed URL directly via the webview — no IPC resolver needed.
-    if (playerSource !== "allmanga" && playerSource !== "enma") {
-      // Build URL directly for non-AllManga/non-Enma anime sources
-      const url = getSourceUrl(
+    // Only AllManga uses the GraphQL IPC resolver.
+    // All other sources load their URL directly via buildSourceUrl
+    // (uses searchUrl for SPA sources like Enma, AnimePahe, Gogo, Aniwatch, 9Anime)
+    if (playerSource !== "allmanga") {
+      const title = item.name || item.title || "";
+      const url = buildSourceUrl(
         playerSource,
         "tv",
         item.id,
@@ -795,47 +796,12 @@ export default function TVPage({
         {},
         playerAccentColor,
         playerSubLang,
+        title,
       );
       resolvedPlayerUrlRef.current = url;
       setResolvedPlayerUrl(url);
       setResolvingUrl(false);
       resolvingUrlRef.current = false;
-      return;
-    }
-
-    // Enma: resolve URL via main-process IPC (search Enma for the show)
-    if (playerSource === "enma") {
-      const title = item.name || item.title || "";
-      if (!title) {
-        setResolveError("No title available for Enma search");
-        return;
-      }
-      resolvingUrlRef.current = true;
-      setResolvingUrl(true);
-      setResolveError(null);
-
-      window.electron
-        .resolveEnma({ title, episode: epNum })
-        .then((res) => {
-          if (!mounted) return;
-          if (res?.ok && res.url) {
-            clearFailoverSource(epKey);
-            resolvedPlayerUrlRef.current = res.url;
-            setResolvedPlayerUrl(res.url);
-            setResolvingUrl(false);
-            resolvingUrlRef.current = false;
-          } else {
-            setResolveError(res?.error || "Not found on Enma");
-            setResolvingUrl(false);
-            resolvingUrlRef.current = false;
-          }
-        })
-        .catch((e) => {
-          if (!mounted) return;
-          setResolveError(e.message || "Enma search failed");
-          setResolvingUrl(false);
-          resolvingUrlRef.current = false;
-        });
       return;
     }
     // Use refs as guards

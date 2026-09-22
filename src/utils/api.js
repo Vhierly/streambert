@@ -263,10 +263,12 @@ export const PLAYER_SOURCES = [
     tag: "ANIME",
     note: null,
     supportsProgress: true,
-    async: true,
+    async: false, // Load search URL directly (SPA, can't scrape episode URLs)
     params: {},
-    movieUrl: (_id) => "https://enma.lol",
-    tvUrl: (_id, _season, _ep) => "https://enma.lol",
+    // Enma is a SPA — search URL is built with title in TVPage/MoviePage
+    movieUrl: (_id) => "https://enma.lol/",
+    tvUrl: (_id, _s, _e) => "https://enma.lol/",
+    searchUrl: (title) => `https://enma.lol/search?q=${encodeURIComponent(title)}`,
   },
   {
     id: "animepahe",
@@ -274,10 +276,12 @@ export const PLAYER_SOURCES = [
     tag: "ANIME",
     note: null,
     supportsProgress: true,
-    async: true,
+    async: false,
     params: {},
-    movieUrl: (_id) => "https://animepahe.ru",
-    tvUrl: (_id, _season, _ep) => "https://animepahe.ru",
+    movieUrl: (_id) => "https://animepahe.ru/",
+    tvUrl: (_id, _s, _e) => "https://animepahe.ru/",
+    // Search URL builder (used when source needs title-based search)
+    searchUrl: (title) => `https://animepahe.ru/search?q=${encodeURIComponent(title)}`,
   },
   {
     id: "gogoanime",
@@ -285,10 +289,11 @@ export const PLAYER_SOURCES = [
     tag: "ANIME",
     note: null,
     supportsProgress: true,
-    async: true,
+    async: false,
     params: {},
-    movieUrl: (_id) => "https://gogoanime.io",
-    tvUrl: (_id, _season, _ep) => "https://gogoanime.io",
+    movieUrl: (_id) => "https://gogoanime.io/",
+    tvUrl: (_id, _s, _e) => "https://gogoanime.io/",
+    searchUrl: (title) => `https://gogoanime.io/search.html?keyword=${encodeURIComponent(title)}`,
   },
   {
     id: "aniwatch",
@@ -296,10 +301,11 @@ export const PLAYER_SOURCES = [
     tag: "ANIME",
     note: null,
     supportsProgress: true,
-    async: true,
+    async: false,
     params: {},
-    movieUrl: (_id) => "https://aniwatch.to",
-    tvUrl: (_id, _season, _ep) => "https://aniwatch.to",
+    movieUrl: (_id) => "https://aniwatch.to/",
+    tvUrl: (_id, _s, _e) => "https://aniwatch.to/",
+    searchUrl: (title) => `https://aniwatch.to/search?keyword=${encodeURIComponent(title)}`,
   },
   {
     id: "nineanime",
@@ -307,10 +313,11 @@ export const PLAYER_SOURCES = [
     tag: "ANIME",
     note: null,
     supportsProgress: true,
-    async: true,
+    async: false,
     params: {},
-    movieUrl: (_id) => "https://9anime.to",
-    tvUrl: (_id, _season, _ep) => "https://9anime.to",
+    movieUrl: (_id) => "https://9anime.or.at/",
+    tvUrl: (_id, _s, _e) => "https://9anime.or.at/",
+    searchUrl: (title) => `https://9anime.or.at/search?keyword=${encodeURIComponent(title)}`,
   },
 ];
 export const getSourceUrl = (
@@ -354,6 +361,33 @@ export const getSourceUrl = (
 
 export const sourceSupportsProgress = (sourceId) =>
   PLAYER_SOURCES.find((s) => s.id === sourceId)?.supportsProgress ?? false;
+
+/**
+ * Build a source URL for anime/movie sources that use title-based search.
+ * Falls back to the regular getSourceUrl for non-search sources.
+ */
+export function buildSourceUrl(sourceId, type, id, season, ep, extraParams = {}, accentColor = null, subtitleLang = null, title = null) {
+  const src = PLAYER_SOURCES.find((s) => s.id === sourceId);
+  if (!src) return null;
+
+  // If source has a searchUrl builder and we have a title, use it
+  if (src.searchUrl && title) {
+    return src.searchUrl(title);
+  }
+
+  // Otherwise use the regular URL builder
+  return getSourceUrl(sourceId, type, id, season, ep, extraParams, accentColor, subtitleLang);
+}
+
+/**
+ * Build a search URL for sources that need title-based search.
+ * Returns the search URL or null if source doesn't support search.
+ */
+export function buildSearchUrl(sourceId, title) {
+  const src = PLAYER_SOURCES.find((s) => s.id === sourceId);
+  if (!src || !src.searchUrl || !title) return null;
+  return src.searchUrl(title);
+}
 
 export const sourceProgressViaFrames = (sourceId) =>
   PLAYER_SOURCES.find((s) => s.id === sourceId)?.progressViaFrames ?? false;
