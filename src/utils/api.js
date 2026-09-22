@@ -318,7 +318,7 @@ export const getNextNonAsyncSource = (currentId) => {
 };
 
 // Sources that require a transparent webRequest intercept to load properly
-export const NEEDS_INTERCEPT = ["vidsrc"];
+export const NEEDS_INTERCEPT = ["vidsrc", "vidlink", "vidspark", "vidfast", "vidcore", "vidphantom", "cinextream", "vidsrc3"];
 
 // ── AniList API (anime metadata) ──────────────────────────────────────────────
 const ANILIST_API = "https://graphql.anilist.co";
