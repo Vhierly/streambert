@@ -106,6 +106,42 @@ const BUILTIN_ADDONS = [
     author: "Streambert",
     builtIn: true,
   },
+  {
+    id: "animepahe",
+    name: "AnimePahe",
+    version: "1.0.0",
+    type: "stream-source",
+    description: "Stream anime from AnimePahe",
+    author: "Streambert",
+    builtIn: true,
+  },
+  {
+    id: "gogoanime",
+    name: "Gogoanime",
+    version: "1.0.0",
+    type: "stream-source",
+    description: "Stream anime from Gogoanime",
+    author: "Streambert",
+    builtIn: true,
+  },
+  {
+    id: "aniwatch",
+    name: "Aniwatch (Zoro)",
+    version: "1.0.0",
+    type: "stream-source",
+    description: "Stream anime from Aniwatch (Zoro)",
+    author: "Streambert",
+    builtIn: true,
+  },
+  {
+    id: "nineanime",
+    name: "9Anime",
+    version: "1.0.0",
+    type: "stream-source",
+    description: "Stream anime from 9Anime",
+    author: "Streambert",
+    builtIn: true,
+  },
 ];
 
 let _addons = new Map(); // id → addon object

@@ -98,13 +98,30 @@ const BLOCKED_HOSTS = [
   "*://doubleclick.vidfast.vc/*",
   "*://googletagmanager.vidfast.vc/*",
   "*://adserver.vidfast.vc/*",
-  // VidCore ad/tracker subdomains
+  // VidCore ad/tracker subdomains — comprehensive ad blocking
   "*://ads.vidcore.org/*",
   "*://track.vidcore.org/*",
   "*://analytics.vidcore.org/*",
   "*://doubleclick.vidcore.org/*",
   "*://googletagmanager.vidcore.org/*",
   "*://adserver.vidcore.org/*",
+  "*://ad.vidcore.org/*",
+  "*://banner.vidcore.org/*",
+  "*://popup.vidcore.org/*",
+  "*://popunder.vidcore.org/*",
+  "*://interstitial.vidcore.org/*",
+  "*://sponsor.vidcore.org/*",
+  "*://promo.vidcore.org/*",
+  "*://offer.vidcore.org/*",
+  "*://track.vidcore.org/*",
+  "*://metrics.vidcore.org/*",
+  "*://telemetry.vidcore.org/*",
+  "*://stats.vidcore.org/*",
+  "*://beacon.vidcore.org/*",
+  "*://pixel.vidcore.org/*",
+  "*://log.vidcore.org/*",
+  "*://click.vidcore.org/*",
+  "*://redirect.vidcore.org/*",
   // VidPhantom ad/tracker subdomains
   "*://ads.vidphantom.com/*",
   "*://track.vidphantom.com/*",
@@ -126,6 +143,27 @@ const BLOCKED_HOSTS = [
   "*://doubleclick.vidsrc3.created.app/*",
   "*://googletagmanager.vidsrc3.created.app/*",
   "*://adserver.vidsrc3.created.app/*",
+  // ── Anime source ad/tracker blocking ──────────────────────────────────────
+  // AnimePahe
+  "*://ads.animepahe.ru/*",
+  "*://track.animepahe.ru/*",
+  "*://analytics.animepahe.ru/*",
+  "*://adserver.animepahe.ru/*",
+  // Gogoanime
+  "*://ads.gogoanime.io/*",
+  "*://track.gogoanime.io/*",
+  "*://analytics.gogoanime.io/*",
+  "*://adserver.gogoanime.io/*",
+  // Aniwatch (Zoro)
+  "*://ads.aniwatch.to/*",
+  "*://track.aniwatch.to/*",
+  "*://analytics.aniwatch.to/*",
+  "*://adserver.aniwatch.to/*",
+  // 9Anime
+  "*://ads.9anime.to/*",
+  "*://track.9anime.to/*",
+  "*://analytics.9anime.to/*",
+  "*://adserver.9anime.to/*",
   // ── Common ad networks used by streaming sources ──────────────────────────
   // Only block known ad-serving domains, NOT main content domains
   "*://*.doubleclick.net/*",

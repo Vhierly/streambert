@@ -245,7 +245,7 @@ export const PLAYER_SOURCES = [
     movieUrl: (id) => `https://vidsrc3.created.app/embed/movie/${id}`,
     tvUrl: (id, season, ep) => `https://vidsrc3.created.app/embed/tv/${id}/${season}/${ep}`,
   },
-  // ── Anime source ──────────────────────────────────────────────────────────
+  // ── Anime sources ─────────────────────────────────────────────────────────
   {
     id: "allmanga",
     label: "AllManga",
@@ -256,6 +256,50 @@ export const PLAYER_SOURCES = [
     params: {},
     movieUrl: (_id) => "https://allmanga.to",
     tvUrl: (_id, _season, _ep) => "https://allmanga.to",
+  },
+  {
+    id: "animepahe",
+    label: "AnimePahe",
+    tag: "ANIME",
+    note: null,
+    supportsProgress: true,
+    async: true,
+    params: {},
+    movieUrl: (_id) => "https://animepahe.ru",
+    tvUrl: (_id, _season, _ep) => "https://animepahe.ru",
+  },
+  {
+    id: "gogoanime",
+    label: "Gogoanime",
+    tag: "ANIME",
+    note: null,
+    supportsProgress: true,
+    async: true,
+    params: {},
+    movieUrl: (_id) => "https://gogoanime.io",
+    tvUrl: (_id, _season, _ep) => "https://gogoanime.io",
+  },
+  {
+    id: "aniwatch",
+    label: "Aniwatch (Zoro)",
+    tag: "ANIME",
+    note: null,
+    supportsProgress: true,
+    async: true,
+    params: {},
+    movieUrl: (_id) => "https://aniwatch.to",
+    tvUrl: (_id, _season, _ep) => "https://aniwatch.to",
+  },
+  {
+    id: "nineanime",
+    label: "9Anime",
+    tag: "ANIME",
+    note: null,
+    supportsProgress: true,
+    async: true,
+    params: {},
+    movieUrl: (_id) => "https://9anime.to",
+    tvUrl: (_id, _season, _ep) => "https://9anime.to",
   },
 ];
 export const getSourceUrl = (
@@ -318,7 +362,7 @@ export const getNextNonAsyncSource = (currentId) => {
 };
 
 // Sources that require a transparent webRequest intercept to load properly
-export const NEEDS_INTERCEPT = ["vidsrc", "vidlink", "vidspark", "vidfast", "vidcore", "vidphantom", "cinextream", "vidsrc3"];
+export const NEEDS_INTERCEPT = ["vidsrc", "vidlink", "vidspark", "vidfast", "vidcore", "vidphantom", "cinextream", "vidsrc3", "animepahe", "gogoanime", "aniwatch", "nineanime"];
 
 // ── AniList API (anime metadata) ──────────────────────────────────────────────
 const ANILIST_API = "https://graphql.anilist.co";
