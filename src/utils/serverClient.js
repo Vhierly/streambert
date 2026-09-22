@@ -59,7 +59,7 @@ export const jellyfinGetLibraries = async () => {
 export const jellyfinGetItems = async (libraryId, params = {}) => {
   const query = new URLSearchParams({
     ParentId: libraryId,
-    Fields: "Overview,Genres,ProductionYear,CommunityRating,UserData',
+    Fields: "Overview,Genres,ProductionYear,CommunityRating,UserData",
     ...params,
   });
   const data = await jellyfinFetch(`/Items?${query}`);

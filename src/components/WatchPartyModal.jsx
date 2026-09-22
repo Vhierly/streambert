@@ -9,7 +9,7 @@ import {
   watchPartySendChat,
   watchPartyOnChange,
 } from "../utils/watchParty";
-import { CloseIcon, CopyIcon, UsersIcon, SendIcon, PlayIcon, PauseIcon } from "./Icons";
+import { CloseIcon, CopyIcon, UsersIcon, SendIcon, PlayIcon } from "./Icons";
 
 export default function WatchPartyModal({ onClose, isPlaying, progress, duration }) {
   const [roomCode, setRoomCode] = useState(null);
@@ -193,7 +193,7 @@ export default function WatchPartyModal({ onClose, isPlaying, progress, duration
             {/* Playback status */}
             <div className="wp-playback">
               <div className="wp-playback-icon">
-                {isPlaying ? <PlayIcon /> : <PauseIcon />}
+                {isPlaying ? <PlayIcon /> : <PlayIcon />}
               </div>
               <div className="wp-progress">
                 <div className="wp-progress-bar">
