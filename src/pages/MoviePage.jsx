@@ -97,6 +97,13 @@ export default function MoviePage({
   );
   // All available sources (built-in + installed community addons)
   const [allSources, setAllSources] = useState(() => getAllSources());
+  // Lock to prevent auto-switch from overriding user's manual source selection
+  const userManualSelectionRef = useRef(false);
+
+  // Reset manual selection lock when navigating to a different movie
+  useEffect(() => {
+    userManualSelectionRef.current = false;
+  }, [item.id]);
 
   // Accent colour + subtitle lang come from App-level state (via props),
   // so they are always fresh after Settings save without any extra storage reads.
@@ -297,6 +304,9 @@ export default function MoviePage({
           if (mounted && data) setAnilistData(data);
         },
       );
+      // Respect user's manual source selection — don't auto-switch if user has manually picked a source
+      if (userManualSelectionRef.current) return;
+
       // Switch to anime source if current source is not an anime source
       const currentSrc = allSources.find((s) => s.id === playerSource);
       if (!currentSrc?.tag) {
@@ -305,7 +315,7 @@ export default function MoviePage({
         setPlayerSource(savedSrc?.tag ? saved : ANIME_DEFAULT_SOURCE);
       }
     } else {
-      // Switch back to non-anime source if current source is anime-only
+      // Switch back to non-anime source if current source is anime-only (only if no manual selection)
       const currentSrc = allSources.find((s) => s.id === playerSource);
       if (currentSrc?.tag) {
         const saved = storage.get("playerSource");
@@ -1194,6 +1204,8 @@ export default function MoviePage({
                       clearFailoverSource(`movie_${item.id}_${dubMode}`);
                       setPlayerSource(src.id);
                       storage.set(STORAGE_KEYS.PLAYER_SOURCE, src.id);
+                      // Lock: user manually selected a source, don't override with auto-switch
+                      userManualSelectionRef.current = true;
                       setM3u8Url(null);
                       setInterceptedSubs([]);
                       resolvedPlayerUrlRef.current = null;

@@ -402,6 +402,14 @@ export default function TVPage({
   );
   // All available sources (built-in + installed community addons)
   const [allSources, setAllSources] = useState(() => getAllSources());
+  // Lock to prevent auto-switch from overriding user's manual source selection
+  const userManualSelectionRef = useRef(false);
+
+  // Reset manual selection lock when navigating to a different show
+  useEffect(() => {
+    userManualSelectionRef.current = false;
+  }, [item.id]);
+
   // Accent colour + subtitle lang come from App-level state (via props),
   // so they are always fresh after Settings save without any extra storage reads.
   const playerAccentColor = playerSettings?.accentColor ?? null;
@@ -684,21 +692,22 @@ export default function TVPage({
         .catch(() => {
           if (mounted) setAnilistLoading(false);
         });
+      // Respect user's manual source selection — don't auto-switch if user has manually picked a source
+      if (userManualSelectionRef.current) return;
+
       // Switch to anime source only if current source is the default non-anime source
-      // (i.e., user hasn't manually selected a different non-anime source)
       const currentSrc = allSources.find((s) => s.id === playerSource);
       if (!currentSrc?.tag) {
         const saved = storage.get("playerSource");
         const savedSrc = allSources.find((s) => s.id === saved);
         // Only auto-switch if the saved source is also non-anime (default behavior)
-        // If user manually selected a non-anime source, respect their choice
         if (!savedSrc?.tag) {
           setPlayerSource(ANIME_DEFAULT_SOURCE);
         }
       }
     } else {
       setAnilistLoading(false);
-      // Switch back to non-anime source if current source is anime-only
+      // Switch back to non-anime source if current source is anime-only (only if no manual selection)
       const currentSrc = allSources.find((s) => s.id === playerSource);
       if (currentSrc?.tag) {
         const saved = storage.get("playerSource");
@@ -2264,6 +2273,8 @@ export default function TVPage({
                           }
                           setPlayerSource(src.id);
                           storage.set(STORAGE_KEYS.PLAYER_SOURCE, src.id);
+                          // Lock: user manually selected a source, don't override with auto-switch
+                          userManualSelectionRef.current = true;
                           setM3u8Url(null);
                           setInterceptedSubs([]);
                           resolvedPlayerUrlRef.current = null;
