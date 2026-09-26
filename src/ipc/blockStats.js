@@ -13,6 +13,9 @@ let pendingBlockBatch = null;
 let blockBatchTimer = null;
 let blockSaveTimer = null;
 
+// Cap on distinct blocked domains kept in the persisted stats.
+const BLOCK_STATS_MAX_DOMAINS = 500;
+
 // Injected by init(), returns the current BrowserWindow (or null)
 let _getMainWindow = () => null;
 
@@ -53,8 +56,23 @@ function recordBlockedRequest(url) {
     return;
   }
 
-  // Update alltime in-memory
+  // Update alltime in-memory.
+  // The ad matcher now catches a lot more hosts than the old hand-written list
+  // did, and this map is serialised to disk, so cap it: a runaway set of
+  // one-off hostnames should not grow the JSON without bound. When the cap is
+  // hit the noisiest entries are kept and the rest folded into "*other*".
   allBlockStats.total++;
+  if (!(domain in allBlockStats.domains)) {
+    const keys = Object.keys(allBlockStats.domains);
+    if (keys.length >= BLOCK_STATS_MAX_DOMAINS) {
+      // drop the smallest entry, it is the least informative
+      let smallest = keys[0];
+      for (const k of keys) {
+        if (allBlockStats.domains[k] < allBlockStats.domains[smallest]) smallest = k;
+      }
+      delete allBlockStats.domains[smallest];
+    }
+  }
   allBlockStats.domains[domain] = (allBlockStats.domains[domain] || 0) + 1;
 
   // Accumulate into pending batch

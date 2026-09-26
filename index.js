@@ -307,17 +307,14 @@ const BLOCKED_HOSTS = [
 //
 // Normalise every pattern to a bare hostname once, then match on suffixes, so
 // `ads.foo.com` covers `foo.com`, `cdn.ads.foo.com` and `ads.foo.com`.
-const BLOCKED_HOSTNAMES = (() => {
-  const out = new Set();
-  for (const pat of BLOCKED_HOSTS) {
-    const m = pat.match(/^\*:\/\/([^/]+)/);
-    if (!m) continue;
-    let h = m[1].toLowerCase();
-    if (h.startsWith("*.")) h = h.slice(2);
-    out.add(h);
-  }
-  return [...out];
-})();
+const BLOCKED_HOSTNAME_SET = new Set();
+for (const pat of BLOCKED_HOSTS) {
+  const m = pat.match(/^\*:\/\/([^/]+)/);
+  if (!m) continue;
+  let h = m[1].toLowerCase();
+  if (h.startsWith("*.")) h = h.slice(2);
+  BLOCKED_HOSTNAME_SET.add(h);
+}
 
 // Hostname fragments that are ad infrastructure no matter which site serves
 // them. Modern streaming players are wrapped by ID-graph / user-sync platforms
@@ -414,20 +411,25 @@ const AD_URL_PATTERNS = [
   /\/(?:prebid|ad-gateway|adgateway)\b/i,
 ];
 
+// Precomputed Set for the O(1) cases. The matcher sits on the webRequest hot
+// path and sees every request the player makes, including ~300 media segments
+// per episode, so the common "not a match" path should not walk 200 entries.
+const AD_HOST_SUFFIX_SET = new Set(AD_HOST_SUFFIXES);
+
 function isAdHost(host) {
   if (!host) return false;
   const h = host.toLowerCase();
-  // exact list match (covers the *. wildcard entries and their bare domains)
-  for (const pat of BLOCKED_HOSTNAMES) {
-    if (h === pat || h.endsWith("." + pat)) return true;
-  }
-  // known ad infrastructure, matched on the last two or three labels
+  if (BLOCKED_HOSTNAME_SET.has(h) || AD_HOST_SUFFIX_SET.has(h)) return true;
   const labels = h.split(".");
-  const tail2 = labels.slice(-2).join(".");
-  const tail3 = labels.slice(-3).join(".");
-  for (const sfx of AD_HOST_SUFFIXES) {
-    if (h === sfx || tail2 === sfx || tail3 === sfx) return true;
-    if (h.endsWith("." + sfx)) return true;
+  // Check the last three labels as a dotted suffix, covering both
+  // "sub.ads.example.com" and bare "example.com" style registrations.
+  for (let n = Math.min(3, labels.length - 1); n >= 1; n--) {
+    const tail = labels.slice(labels.length - n).join(".");
+    if (BLOCKED_HOSTNAME_SET.has(tail) || AD_HOST_SUFFIX_SET.has(tail)) return true;
+  }
+  // A listed domain covers its subdomains.
+  for (let i = 0; i < labels.length - 1; i++) {
+    if (BLOCKED_HOSTNAME_SET.has(labels.slice(i).join("."))) return true;
   }
   return false;
 }
