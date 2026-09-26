@@ -94,7 +94,13 @@ export default function MoviePage({
   const [m3u8Url, setM3u8Url] = useState(null);
   const [interceptedSubs, setInterceptedSubs] = useState([]);
   const [playerSource, setPlayerSource] = useState(
-    () => storage.get("playerSource") || NON_ANIME_DEFAULT_SOURCE,
+    () => {
+      const saved = storage.get("playerSource");
+      // See TVPage: a remembered but no-longer-installed source id would make
+      // buildSourceUrl() return null and leave the player blank.
+      if (saved && getAllSources().some((s) => s.id === saved)) return saved;
+      return NON_ANIME_DEFAULT_SOURCE;
+    },
   );
   // All available sources (built-in + installed community addons)
   const [allSources, setAllSources] = useState(() => getAllSources());

@@ -398,11 +398,17 @@ export default function TVPage({
   const [showTrailer, setShowTrailer] = useState(false);
   const [m3u8Url, setM3u8Url] = useState(null);
   const [interceptedSubs, setInterceptedSubs] = useState([]);
-  const [playerSource, setPlayerSource] = useState(
-    () => storage.get("playerSource") || NON_ANIME_DEFAULT_SOURCE,
-  );
   // All available sources (built-in + installed community addons)
   const [allSources, setAllSources] = useState(() => getAllSources());
+  const [playerSource, setPlayerSource] = useState(() => {
+    const saved = storage.get("playerSource");
+    // A remembered source can stop existing: an anime source that was removed,
+    // or a community addon that was uninstalled. buildSourceUrl() returns null
+    // for an unknown id, which leaves the player blank with no error, so only
+    // honour a saved id that is still installed.
+    if (saved && getAllSources().some((s) => s.id === saved)) return saved;
+    return NON_ANIME_DEFAULT_SOURCE;
+  });
   // Lock to prevent auto-switch from overriding user's manual source selection
   const userManualSelectionRef = useRef(false);
 
