@@ -257,79 +257,6 @@ export const PLAYER_SOURCES = [
     movieUrl: (_id) => "https://hianime.at",
     tvUrl: (_id, _season, _ep) => "https://hianime.at",
   },
-  {
-    id: "allmanga",
-    label: "AllManga",
-    tag: "ANIME",
-    note: null,
-    supportsProgress: true,
-    async: true,
-    params: {},
-    movieUrl: (_id) => "https://allmanga.to",
-    tvUrl: (_id, _season, _ep) => "https://allmanga.to",
-  },
-  {
-    id: "enma",
-    label: "Enma",
-    tag: "ANIME",
-    note: null,
-    supportsProgress: true,
-    async: false, // Load search URL directly (SPA, can't scrape episode URLs)
-    params: {},
-    // Enma is a SPA — search URL is built with title in TVPage/MoviePage
-    movieUrl: (_id) => "https://enma.lol/",
-    tvUrl: (_id, _s, _e) => "https://enma.lol/",
-    searchUrl: (title) => `https://enma.lol/search?q=${encodeURIComponent(title)}`,
-  },
-  {
-    id: "animepahe",
-    label: "AnimePahe",
-    tag: "ANIME",
-    note: null,
-    supportsProgress: true,
-    async: false,
-    params: {},
-    movieUrl: (_id) => "https://animepahe.ru/",
-    tvUrl: (_id, _s, _e) => "https://animepahe.ru/",
-    // Search URL builder (used when source needs title-based search)
-    searchUrl: (title) => `https://animepahe.ru/search?q=${encodeURIComponent(title)}`,
-  },
-  {
-    id: "gogoanime",
-    label: "Gogoanime",
-    tag: "ANIME",
-    note: null,
-    supportsProgress: true,
-    async: false,
-    params: {},
-    movieUrl: (_id) => "https://gogoanime.io/",
-    tvUrl: (_id, _s, _e) => "https://gogoanime.io/",
-    searchUrl: (title) => `https://gogoanime.io/search.html?keyword=${encodeURIComponent(title)}`,
-  },
-  {
-    id: "aniwatch",
-    label: "Aniwatch (Zoro)",
-    tag: "ANIME",
-    note: null,
-    supportsProgress: true,
-    async: false,
-    params: {},
-    movieUrl: (_id) => "https://aniwatch.to/",
-    tvUrl: (_id, _s, _e) => "https://aniwatch.to/",
-    searchUrl: (title) => `https://aniwatch.to/search?keyword=${encodeURIComponent(title)}`,
-  },
-  {
-    id: "nineanime",
-    label: "9Anime",
-    tag: "ANIME",
-    note: null,
-    supportsProgress: true,
-    async: false,
-    params: {},
-    movieUrl: (_id) => "https://9anime.or.at/",
-    tvUrl: (_id, _s, _e) => "https://9anime.or.at/",
-    searchUrl: (title) => `https://9anime.or.at/search?keyword=${encodeURIComponent(title)}`,
-  },
 ];
 export const getSourceUrl = (
   sourceId,
@@ -418,7 +345,7 @@ export const getNextNonAsyncSource = (currentId) => {
 };
 
 // Sources that require a transparent webRequest intercept to load properly
-export const NEEDS_INTERCEPT = ["vidsrc", "vidlink", "vidspark", "vidfast", "vidcore", "vidphantom", "cinextream", "vidsrc3", "animepahe", "gogoanime", "aniwatch", "nineanime"];
+export const NEEDS_INTERCEPT = ["vidsrc", "vidlink", "vidspark", "vidfast", "vidcore", "vidphantom", "cinextream", "vidsrc3"];
 
 /**
  * Get all available sources — built-in PLAYER_SOURCES + installed community addons.
@@ -661,8 +588,9 @@ export const isAnimeContent = (item, details) => {
 };
 
 // Default sources
-// HiAnime is the default: AllAnime (allmanga) episode queries now return
-// AA_CRYPTO_MISSING, so allmanga only works as a manual fallback.
+// HiAnime is the only anime source: it is the one provider whose episode
+// stream actually resolves reliably (the removed AllAnime provider returns
+// AA_CRYPTO_MISSING, Enma hits a Cloudflare wall, 9Anime 404s).
 export const ANIME_DEFAULT_SOURCE = "hianime";
 export const NON_ANIME_DEFAULT_SOURCE = "vidsrc";
 

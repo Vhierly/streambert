@@ -721,7 +721,8 @@ export default function TVPage({
     };
   }, [item.id, isAnime]);
 
-  // Resolve allmanga episode URL via main-process IPC (GraphQL, no CORS)
+  // Resolve the HiAnime episode stream via main-process IPC (the only place
+  // that can attach the Referer the HLS CDN requires)
   useEffect(() => {
     if (!playing || !selectedEp) return;
     const epNum = selectedEp.episode_number;
@@ -782,10 +783,10 @@ export default function TVPage({
       setTimeout(injectCfSolver, 3000);
     }
 
-    // HiAnime and AllManga both use a main-process IPC resolver.
-    // All other sources load their URL directly via buildSourceUrl
-    // (uses searchUrl for SPA sources like Enma, AnimePahe, Gogo, Aniwatch, 9Anime)
-    if (playerSource !== "allmanga" && playerSource !== "hianime") {
+    // HiAnime is the only anime source, and it always resolves through the
+    // main-process IPC. Every other source loads its URL directly via
+    // buildSourceUrl.
+    if (playerSource !== "hianime") {
       const title = item.name || item.title || "";
       const url = buildSourceUrl(
         playerSource,
@@ -812,26 +813,20 @@ export default function TVPage({
     const progressKey = `tv_${item.id}_s${selectedSeason}e${epNum}`;
     const startTime = storage.get("dlTime_" + progressKey) || 0;
     let mounted = true;
-    // HiAnime returns a plain m3u8 that plays directly; AllManga may return a
-    // direct mp4 that needs the local proxy player.
-    const resolver =
-      playerSource === "hianime"
-        ? window.electron.resolveHianime
-        : window.electron.resolveAllManga;
-    resolver({
-      title,
-      seasonNumber: selectedSeason,
-      episodeNumber: epNum,
-      translationType: dubMode,
-    })
+    window.electron
+      .resolveHianime({
+        title,
+        seasonNumber: selectedSeason,
+        episodeNumber: epNum,
+        translationType: dubMode,
+      })
       .then((res) => {
         if (!mounted) return;
         if (res?.ok && res.url) {
           clearFailoverSource(epKey);
           // Zokoanime is an embed service. When the blob scrape failed we get
-          // back the embed page URL instead of a stream — load it in the webview
-          // like the other embed sources (Enma / 9Anime / AnimePahe). A real page
-          // sets its own Referer, so the HLS CDN never 403s.
+          // back the embed page URL instead of a stream — load it in the webview.
+          // A real page sets its own Referer, so the HLS CDN never 403s.
           if (res.isEmbedPage) {
             resolvedPlayerUrlRef.current = res.url;
             setResolvedPlayerUrl(res.url);
@@ -842,80 +837,35 @@ export default function TVPage({
           // HiAnime's CDN rejects requests without the embed Referer, and the
           // renderer cannot set that header — so use the loopback proxy player
           // that attaches it in the main process.
-          if (playerSource === "hianime") {
-            window.electron
-              .hianimePlayerUrl({
-                url: res.url,
-                referer: res.referer,
-                subtitles: res.subtitles,
-                startTime,
-              })
-              .then((r) => {
-                if (!mounted) return;
-                if (!r?.ok || !r.playerUrl) {
-                  setResolveError(r?.error || "Failed to start local player");
-                  return;
-                }
-                resolvedPlayerUrlRef.current = r.playerUrl;
-                setResolvedPlayerUrl(r.playerUrl);
-                // Expose the raw upstream url so the download button can use it
-                setM3u8Url(res.url);
-              })
-              .catch((e) => {
-                if (mounted) setResolveError(e.message || "Failed to start local player");
-              });
-            return;
-          }
-          if (res.isDirectMp4 !== undefined) {
-            window.electron
-              .setPlayerVideo({
-                url: res.url,
-                referer: res.referer || "https://allmanga.to",
-                startTime,
-              })
-              .then((r) => {
-                if (!mounted) return;
-                resolvedPlayerUrlRef.current = r.playerUrl;
-                setResolvedPlayerUrl(r.playerUrl);
-                // Also expose raw url so download button can use it
-                setM3u8Url(res.url);
-              })
-              .catch(() => {
-                if (mounted) setResolveError("Failed to start local player");
-              });
-          } else {
-            resolvedPlayerUrlRef.current = res.url;
-            setResolvedPlayerUrl(res.url);
-          }
-        } else {
-          // Only auto-failover between anime sources — don't jump to non-anime sources
-          const currentSrc = allSources.find((s) => s.id === playerSource);
-          if (currentSrc?.tag) {
-            // Current source is an anime source — try the next anime source
-            // For AllManga/Enma failures, try the next anime source (skip self)
-            const animeSources = allSources.filter((s) => s.tag === "ANIME");
-            const currentIdx = animeSources.findIndex((s) => s.id === playerSource);
-            // Try all anime sources starting from the next one
-            for (let i = 1; i < animeSources.length; i++) {
-              const nextAnime = animeSources[(currentIdx + i) % animeSources.length];
-              if (nextAnime && nextAnime.id !== playerSource) {
-                setFailoverSource(epKey, nextAnime.id);
-                setM3u8Url(null);
-                setInterceptedSubs([]);
-                resolvedPlayerUrlRef.current = null;
-                setResolvedPlayerUrl(null);
-                resolvingUrlRef.current = false;
-                setResolvingUrl(false);
-                setResolveError(null);
-                setPlayerSource(nextAnime.id);
+          window.electron
+            .hianimePlayerUrl({
+              url: res.url,
+              referer: res.referer,
+              subtitles: res.subtitles,
+              startTime,
+            })
+            .then((r) => {
+              if (!mounted) return;
+              if (!r?.ok || !r.playerUrl) {
+                setResolveError(r?.error || "Failed to start local player");
                 return;
               }
-            }
-            setResolveError(res?.error || `Episode not found on ${currentSrc.label}`);
-          } else {
-            // Current source is non-anime — show error, don't auto-switch
-            setResolveError(res?.error || `Episode not found on ${currentSrc?.label || playerSource}`);
-          }
+              resolvedPlayerUrlRef.current = r.playerUrl;
+              setResolvedPlayerUrl(r.playerUrl);
+              // Expose the raw upstream url so the download button can use it
+              setM3u8Url(res.url);
+            })
+            .catch((e) => {
+              if (mounted) setResolveError(e.message || "Failed to start local player");
+            });
+        } else {
+          // HiAnime is the only anime source, so there is nothing to fail over
+          // to — surface the resolver's own error, which carries the real
+          // reason (episode not released, title not found, all servers failed).
+          const currentSrc = allSources.find((s) => s.id === playerSource);
+          setResolveError(
+            res?.error || `Episode not found on ${currentSrc?.label || "HiAnime"}`,
+          );
         }
       })
       .catch((e) => {

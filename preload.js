@@ -58,10 +58,13 @@ contextBridge.exposeInMainWorld("electron", {
   offConfirmClose: (h) => ipcRenderer.removeListener("confirm-close", h),
   respondClose: (confirm) => ipcRenderer.send("close-response", confirm),
 
-  // anime episode resolver (main-process HTTP, bypasses CORS/bot-check)
-  resolveAllManga: (args) => ipcRenderer.invoke("resolve-allmanga", args),
-  setPlayerVideo: (args) => ipcRenderer.invoke("set-player-video", args),
-  debugAllManga: (args) => ipcRenderer.invoke("debug-allmanga", args),
+  // HiAnime anime source: search/resolve/player all go through the main
+  // process, which is the only place that can attach the Referer the HLS CDN
+  // requires (403 otherwise).
+  resolveHianime: (args) => ipcRenderer.invoke("resolve-hianime", args),
+  searchHianime: (args) => ipcRenderer.invoke("search-hianime", args),
+  hianimeEpisodes: (args) => ipcRenderer.invoke("hianime-episodes", args),
+  hianimePlayerUrl: (args) => ipcRenderer.invoke("hianime-player-url", args),
 
   // App version (from package.json via Electron)
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
@@ -194,15 +197,6 @@ contextBridge.exposeInMainWorld("electron", {
   discordRpcUpdateActivity: (activity) =>
     ipcRenderer.invoke("discord-rpc-update-activity", activity),
 
-  // Enma anime resolver (main-process search, avoids CORS)
-  resolveEnma: (args) => ipcRenderer.invoke("resolve-enma", args),
-
-  // HiAnime anime source (hianime.at) — main working provider
-  resolveHianime: (args) => ipcRenderer.invoke("resolve-hianime", args),
-  searchHianime: (args) => ipcRenderer.invoke("search-hianime", args),
-  hianimeEpisodes: (args) => ipcRenderer.invoke("hianime-episodes", args),
-  // Loopback player that attaches the Referer the HLS CDN requires (403 otherwise)
-  hianimePlayerUrl: (args) => ipcRenderer.invoke("hianime-player-url", args),
 
   // Trakt.tv integration (PIN-based OAuth flow)
   traktGetPin: () => ipcRenderer.invoke("trakt-get-pin"),

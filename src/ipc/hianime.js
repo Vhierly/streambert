@@ -661,7 +661,18 @@ function getPlayerServer() {
 // The player page only ever talks to our own loopback origin, so hls.js fetches
 // the (already-rewritten, already-Referer'd) playlist over plain HTTP.
 function buildPlayerHtml() {
-  const subs = JSON.stringify(_proxySubs.map((s) => proxyPathFor(s)));
+  // Normalise whatever the resolver produced (bare URLs, or {src,lang,label}
+  // objects) into track descriptors, and route each through the proxy so the
+  // VTT request also carries the Referer the CDN demands.
+  const tracks = (_proxySubs || []).map((s, i) => {
+    const o = typeof s === "string" ? { src: s } : s;
+    return {
+      src: proxyPathFor(o.src),
+      lang: o.lang || "ja",
+      label: o.label || (i === 0 ? "Subtitle" : "Subtitle " + (i + 1)),
+    };
+  });
+  const subs = JSON.stringify(tracks);
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{width:100%;height:100%;object-fit:contain;display:block}</style>
@@ -672,28 +683,44 @@ function buildPlayerHtml() {
   const video=document.getElementById('v');
   const src=new URLSearchParams(location.search).get('src')||'';
   const startTime=parseFloat(new URLSearchParams(location.search).get('t')||'0');
+
+  // Attach subtitle tracks BEFORE any media is loaded. Flipping a text track's
+  // mode after playback has started makes Chromium tear down and re-arm the
+  // media pipeline, which shows up as a stalled video (readyState 0, paused).
   const subs=${subs};
+  if(subs.length){
+    subs.forEach((s,i)=>{
+      const t=document.createElement('track');
+      t.kind='subtitles';
+      t.label=s.label||(i===0?'Subtitle':'Subtitle '+(i+1));
+      t.srclang=s.lang||'ja';
+      t.src=s.src;
+      t.default=(i===0);
+      video.appendChild(t);
+    });
+  }
+
+  function start(){
+    if(startTime>0)video.currentTime=startTime;
+    video.play().catch(()=>{});
+  }
+  // Chromium leaves an appended <track> in mode "disabled" and never fetches it,
+  // so no cues ever appear. Set the modes here, before loadSource.
+  for(let i=0;i<video.textTracks.length;i++){
+    try{video.textTracks[i].mode=(i===0?'showing':'hidden')}catch(e){}
+  }
+
   if(Hls.isSupported()){
     const hls=new Hls({enableWorker:false});
     hls.loadSource(src);
     hls.attachMedia(video);
-    hls.on(Hls.Events.MANIFEST_PARSED,()=>{
-      if(startTime>0)video.currentTime=startTime;
-      video.play().catch(()=>{});
-    });
+    hls.on(Hls.Events.MANIFEST_PARSED,start);
     hls.on(Hls.Events.ERROR,(e,d)=>{
       if(d.fatal)console.error('HLS fatal',d.type,d.details);
     });
   }else if(video.canPlayType('application/vnd.apple.mpegurl')){
     video.src=src;
-    video.addEventListener('loadedmetadata',()=>{if(startTime>0)video.currentTime=startTime;},{once:true});
-  }
-  if(subs.length&&video.textTracks){
-    for(const s of subs){
-      const t=document.createElement('track');
-      t.kind='subtitles';t.src=s;t.srclang='ja';t.default=(t===subs[0]);
-      video.appendChild(t);
-    }
+    video.addEventListener('loadedmetadata',start,{once:true});
   }
 </script>
 </body></html>`;

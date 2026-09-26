@@ -334,10 +334,8 @@ export default function MoviePage({
     if (!playing) return;
     const epKey = `movie_${item.id}_${dubMode}`;
 
-    // HiAnime and AllManga both use a main-process IPC resolver.
-    // All other sources load their URL directly via buildSourceUrl
-    // (uses searchUrl for SPA sources like Enma, AnimePahe, Gogo, Aniwatch, 9Anime)
-    if (playerSource !== "allmanga" && playerSource !== "hianime") {
+    // HiAnime is the only anime source; everything else builds its URL directly.
+    if (playerSource !== "hianime") {
       const title = item.title || item.name || "";
       const url = buildSourceUrl(
         playerSource,
@@ -382,44 +380,55 @@ export default function MoviePage({
     const startTime = storage.get("dlTime_" + progressKey) || 0;
     let mounted = true;
 
-    // HiAnime (preferred) and AllManga: resolve via main-process IPC
-    const resolver =
-      playerSource === "hianime"
-        ? window.electron.resolveHianime
-        : window.electron.resolveAllManga;
-    resolver({
-      title,
-      seasonNumber: 1,
-      episodeNumber: 1,
-      isMovie: true,
-      translationType: dubMode,
-    })
+    // HiAnime is the only anime source: resolve via main-process IPC
+    window.electron
+      .resolveHianime({
+        title,
+        seasonNumber: 1,
+        episodeNumber: 1,
+        isMovie: true,
+        translationType: dubMode,
+      })
       .then((res) => {
         if (!mounted) return;
         if (res?.ok && res.url) {
           clearFailoverSource(epKey);
-          if (res.isDirectMp4 !== undefined) {
-            window.electron
-              .setPlayerVideo({
-                url: res.url,
-                referer: res.referer || "https://allmanga.to",
-                startTime,
-              })
-              .then((r) => {
-                if (!mounted) return;
-                resolvedPlayerUrlRef.current = r.playerUrl;
-                setResolvedPlayerUrl(r.playerUrl);
-                setM3u8Url(res.url);
-              })
-              .catch(() => {
-                if (mounted) setResolveError("Failed to start local player");
-              });
-          } else {
+          // Embed-page fallback — see TVPage for the rationale.
+          if (res.isEmbedPage) {
             resolvedPlayerUrlRef.current = res.url;
             setResolvedPlayerUrl(res.url);
+            setM3u8Url(null);
+            if (res.warning) console.warn("[hianime]", res.warning);
+            return;
           }
+          window.electron
+            .hianimePlayerUrl({
+              url: res.url,
+              referer: res.referer,
+              subtitles: res.subtitles,
+              startTime,
+            })
+            .then((r) => {
+              if (!mounted) return;
+              if (!r?.ok || !r.playerUrl) {
+                setResolveError(r?.error || "Failed to start local player");
+                return;
+              }
+              resolvedPlayerUrlRef.current = r.playerUrl;
+              setResolvedPlayerUrl(r.playerUrl);
+              setM3u8Url(res.url);
+            })
+            .catch((e) => {
+              if (mounted) setResolveError(e.message || "Failed to start local player");
+            });
+          return;
+        }
+        // HiAnime has no match for this title. Fall back to a non-anime source
+        // only when the user explicitly picked one; otherwise just report it.
+        const currentSrc = allSources.find((s) => s.id === playerSource);
+        if (currentSrc?.tag === "ANIME") {
+          setResolveError(res?.error || "Movie not found on HiAnime");
         } else {
-          // AllManga doesn't have this title → switch to the next source
           const next = getNextNonAsyncSource(playerSource);
           if (next) {
             setFailoverSource(epKey, next);
@@ -430,7 +439,7 @@ export default function MoviePage({
             setResolveError(null);
             setPlayerSource(next);
           } else {
-            setResolveError(res?.error || "Movie not found on AllManga");
+            setResolveError(res?.error || "Movie not found on HiAnime");
           }
         }
       })
