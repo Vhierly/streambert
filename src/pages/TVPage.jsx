@@ -757,9 +757,15 @@ export default function TVPage({
 
     // Cloudflare challenge handler for ALL sources — auto-solve "I'm not a robot"
     const wv = webviewRef.current;
+    // These two retries used to be bare setTimeouts, so switching episode or
+    // source within three seconds left a pending timer holding the *old*
+    // webview alive and then poking executeJavaScript at a stale or destroyed
+    // element. Track them so the cleanup can cancel.
+    const cfTimers = [];
     if (wv) {
       const injectCfSolver = () => {
-        wv.executeJavaScript(`
+        if (!wv.isDestroyed?.()) {
+          wv.executeJavaScript(`
           (function() {
             // Try to click the Cloudflare checkbox
             const checkbox = document.querySelector('input[type="checkbox"]');
@@ -782,11 +788,12 @@ export default function TVPage({
             return 'no_challenge';
           })();
         `).catch(() => {});
+        }
       };
       // Inject after a short delay to let the page load
-      setTimeout(injectCfSolver, 1000);
+      cfTimers.push(setTimeout(injectCfSolver, 1000));
       // Also retry after 3 seconds in case the challenge appears later
-      setTimeout(injectCfSolver, 3000);
+      cfTimers.push(setTimeout(injectCfSolver, 3000));
     }
 
     // HiAnime is the only anime source, and it always resolves through the
@@ -887,6 +894,7 @@ export default function TVPage({
       });
     return () => {
       mounted = false;
+      cfTimers.forEach(clearTimeout);
     };
   }, [playing, selectedEp, playerSource, selectedSeason, dubMode]);
 
