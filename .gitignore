@@ -5,3 +5,6 @@ dist/
 *.zip
 *secret.txt
 release/
+
+# agent scratch files
+.depaudit*.mjs
