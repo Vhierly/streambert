@@ -98,6 +98,15 @@ const BUILTIN_ADDONS = [
     builtIn: true,
   },
   {
+    id: "hianime",
+    name: "HiAnime",
+    version: "1.0.0",
+    type: "stream-source",
+    description: "Stream anime from HiAnime (hianime.at)",
+    author: "Streambert",
+    builtIn: true,
+  },
+  {
     id: "allmanga",
     name: "AllManga",
     version: "1.0.0",

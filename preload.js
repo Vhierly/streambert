@@ -197,6 +197,11 @@ contextBridge.exposeInMainWorld("electron", {
   // Enma anime resolver (main-process search, avoids CORS)
   resolveEnma: (args) => ipcRenderer.invoke("resolve-enma", args),
 
+  // HiAnime anime source (hianime.at) — main working provider
+  resolveHianime: (args) => ipcRenderer.invoke("resolve-hianime", args),
+  searchHianime: (args) => ipcRenderer.invoke("search-hianime", args),
+  hianimeEpisodes: (args) => ipcRenderer.invoke("hianime-episodes", args),
+
   // Trakt.tv integration (PIN-based OAuth flow)
   traktGetPin: () => ipcRenderer.invoke("trakt-get-pin"),
   traktPollPin: (pin, interval) =>

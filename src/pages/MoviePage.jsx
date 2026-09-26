@@ -334,10 +334,10 @@ export default function MoviePage({
     if (!playing) return;
     const epKey = `movie_${item.id}_${dubMode}`;
 
-    // Only AllManga uses the GraphQL IPC resolver.
+    // HiAnime and AllManga both use a main-process IPC resolver.
     // All other sources load their URL directly via buildSourceUrl
     // (uses searchUrl for SPA sources like Enma, AnimePahe, Gogo, Aniwatch, 9Anime)
-    if (playerSource !== "allmanga") {
+    if (playerSource !== "allmanga" && playerSource !== "hianime") {
       const title = item.title || item.name || "";
       const url = buildSourceUrl(
         playerSource,
@@ -382,15 +382,18 @@ export default function MoviePage({
     const startTime = storage.get("dlTime_" + progressKey) || 0;
     let mounted = true;
 
-    // AllManga: resolve via GraphQL IPC
-    window.electron
-      .resolveAllManga({
-        title,
-        seasonNumber: 1,
-        episodeNumber: 1,
-        isMovie: true,
-        translationType: dubMode,
-      })
+    // HiAnime (preferred) and AllManga: resolve via main-process IPC
+    const resolver =
+      playerSource === "hianime"
+        ? window.electron.resolveHianime
+        : window.electron.resolveAllManga;
+    resolver({
+      title,
+      seasonNumber: 1,
+      episodeNumber: 1,
+      isMovie: true,
+      translationType: dubMode,
+    })
       .then((res) => {
         if (!mounted) return;
         if (res?.ok && res.url) {

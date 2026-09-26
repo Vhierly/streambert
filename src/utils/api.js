@@ -247,6 +247,17 @@ export const PLAYER_SOURCES = [
   },
   // ── Anime sources ─────────────────────────────────────────────────────────
   {
+    id: "hianime",
+    label: "HiAnime",
+    tag: "ANIME",
+    note: null,
+    supportsProgress: true,
+    async: true,
+    params: {},
+    movieUrl: (_id) => "https://hianime.at",
+    tvUrl: (_id, _season, _ep) => "https://hianime.at",
+  },
+  {
     id: "allmanga",
     label: "AllManga",
     tag: "ANIME",
@@ -650,7 +661,9 @@ export const isAnimeContent = (item, details) => {
 };
 
 // Default sources
-export const ANIME_DEFAULT_SOURCE = "allmanga";
+// HiAnime is the default: AllAnime (allmanga) episode queries now return
+// AA_CRYPTO_MISSING, so allmanga only works as a manual fallback.
+export const ANIME_DEFAULT_SOURCE = "hianime";
 export const NON_ANIME_DEFAULT_SOURCE = "vidsrc";
 
 // ── Episode Group fetch (localStorage + in-memory cache, 7-day TTL) ─────────
