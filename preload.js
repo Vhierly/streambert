@@ -201,6 +201,8 @@ contextBridge.exposeInMainWorld("electron", {
   resolveHianime: (args) => ipcRenderer.invoke("resolve-hianime", args),
   searchHianime: (args) => ipcRenderer.invoke("search-hianime", args),
   hianimeEpisodes: (args) => ipcRenderer.invoke("hianime-episodes", args),
+  // Loopback player that attaches the Referer the HLS CDN requires (403 otherwise)
+  hianimePlayerUrl: (args) => ipcRenderer.invoke("hianime-player-url", args),
 
   // Trakt.tv integration (PIN-based OAuth flow)
   traktGetPin: () => ipcRenderer.invoke("trakt-get-pin"),

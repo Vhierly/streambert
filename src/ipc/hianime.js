@@ -33,7 +33,7 @@ const BLOB_KEY = "otaku-embed-v1";
 
 // ── HTTP helper ──────────────────────────────────────────────────────────────
 
-function httpGet(url, { headers = {}, timeout = 15000, method = "GET" } = {}) {
+function httpGet(url, { headers = {}, timeout = 15000, method = "GET", retries = 2 } = {}) {
   return new Promise((resolve) => {
     let u;
     try {
@@ -74,6 +74,24 @@ function httpGet(url, { headers = {}, timeout = 15000, method = "GET" } = {}) {
   });
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// HiAnime rate-limits bursts: a resolve fires ~12 episode-list requests in
+// parallel, and an unlucky burst comes back empty (or 429/403), which looks
+// exactly like "no such anime". Retry a couple of times with a short backoff
+// before believing the empty result.
+async function httpGetRetry(url, opts = {}) {
+  let last;
+  for (let attempt = 0; attempt <= (opts.retries ?? 2); attempt++) {
+    last = await httpGet(url, opts);
+    if (last.status === 200 && last.body) return last;
+    // 4xx other than 429 will not fix themselves
+    if (last.status >= 400 && last.status < 500 && last.status !== 429) return last;
+    if (attempt < (opts.retries ?? 2)) await sleep(400 * (attempt + 1));
+  }
+  return last;
+}
+
 // m3u8 playlists use bare relative URIs like "800/index.m3u8" — resolve against
 // the playlist's own URL, never string-concatenate the host.
 function resolveUri(uri, playlistUrl) {
@@ -107,7 +125,7 @@ function decodeBlob(b64) {
 // ── Step 1: search ───────────────────────────────────────────────────────────
 
 async function hiaSearch(query) {
-  const r = await httpGet(
+  const r = await httpGetRetry(
     `${HIA_BASE}/search?keyword=${encodeURIComponent(query)}`,
     { headers: { Accept: "text/html,application/xhtml+xml" } },
   );
@@ -134,7 +152,7 @@ async function hiaSearch(query) {
 // ── Step 2: episode list ─────────────────────────────────────────────────────
 
 async function hiaEpisodes(animeId) {
-  const r = await httpGet(`${HIA_BASE}/api/theme/episode/list/${animeId}`);
+  const r = await httpGetRetry(`${HIA_BASE}/api/theme/episode/list/${animeId}`);
   if (r.status !== 200) return [];
   let j;
   try {
@@ -163,7 +181,7 @@ async function hiaEpisodes(animeId) {
 // ── Step 3: servers for an episode ───────────────────────────────────────────
 
 async function hiaServers(epId) {
-  const r = await httpGet(
+  const r = await httpGetRetry(
     `${HIA_BASE}/api/theme/episode/servers?episodeId=${epId}`,
   );
   if (r.status !== 200) return [];
@@ -190,9 +208,14 @@ async function hiaResolveEmbed(hashB64) {
   // The stream host validates that Referer points at the embed site.
   const referer = embedUrl.replace(/^(https?:\/\/[^/]*).*$/, "$1/");
 
-  const r = await httpGet(embedUrl, { headers: { Referer: referer } });
+  // The embed site is a separate, slower host than hianime.at — give it a longer
+  // timeout and retry, because one dropped request here means "no source".
+  const r = await httpGetRetry(embedUrl, {
+    headers: { Referer: referer },
+    timeout: 20000,
+  });
   if (r.status !== 200)
-    return { ok: false, error: `embed HTTP ${r.status}`, embedUrl, referer };
+    return { ok: false, error: `embed HTTP ${r.status || "fail"}`, embedUrl, referer };
 
   const blob = (r.body.match(/window\.__P="([^"]*)"/) || [])[1];
   if (!blob) return { ok: false, error: "no __P blob on embed page", embedUrl, referer };
@@ -315,9 +338,17 @@ async function resolveHianime({ title, seasonNumber = 1, episodeNumber = 1, tran
   // Episode lists double as the disambiguation signal: HiAnime returns many
   // sibling entries per series, and a short arc ("Demon Slayer: Mt. Natagumo
   // Arc", 1 ep) can outrank the real show purely by search order. Fetch them
-  // for the top candidates in parallel.
+  // for the top candidates — in small batches, because a wide parallel burst
+  // trips the site's rate limiter and comes back empty.
   const topN = candidates.slice(0, 12);
-  const epLists = await Promise.all(topN.map((c) => hiaEpisodes(c.id)));
+  const epLists = [];
+  const BATCH = 4;
+  for (let i = 0; i < topN.length; i += BATCH) {
+    const slice = topN.slice(i, i + BATCH);
+    const got = await Promise.all(slice.map((c) => hiaEpisodes(c.id)));
+    epLists.push(...got);
+    if (i + BATCH < topN.length) await sleep(250);
+  }
   topN.forEach((c, i) => {
     c._episodes = epLists[i];
     c.episodeCount = epLists[i].length;
@@ -384,7 +415,19 @@ async function resolveHianime({ title, seasonNumber = 1, episodeNumber = 1, tran
   ];
 
   const errors = [];
+  // Zokoanime is an *embed* service: the page is a self-contained player, so if
+  // the blob scrape fails we can still hand the renderer the embed URL and let a
+  // webview load it — a real page sets its own Referer, so nothing 403s. This is
+  // the same path the app already uses for Enma / 9Anime / AnimePahe.
+  let embedFallback = null;
   for (const srv of ordered) {
+    if (!embedFallback && srv.hash) {
+      try {
+        embedFallback = Buffer.from(srv.hash, "base64").toString("utf8");
+      } catch {
+        /* fall through — blob path may still work */
+      }
+    }
     const res = await hiaResolveEmbed(srv.hash);
     if (!res.ok) {
       errors.push(`${srv.name}: ${res.error}`);
@@ -414,9 +457,27 @@ async function resolveHianime({ title, seasonNumber = 1, episodeNumber = 1, tran
       qualities,
       subtitles: res.subtitles,
       referer: res.referer,
+      embedUrl: res.embedUrl || embedFallback,
       server: srv.name,
       source: "hianime",
       diagnostics: diags,
+    };
+  }
+
+  // Every server's blob scrape failed — but the embed pages themselves are
+  // playable, so report success with the embed URL and let the renderer decide
+  // (webview it, like Enma/9Anime). Downgrading to ok:true here beats showing
+  // "no source" when a working source exists.
+  if (embedFallback) {
+    return {
+      ok: true,
+      url: embedFallback,
+      isEmbedPage: true,
+      referer: null,
+      server: ordered[0]?.name || "ZokoAnime",
+      source: "hianime",
+      diagnostics: diags,
+      warning: "Blob scrape failed (" + errors.join(" | ") + "); using embed page",
     };
   }
 
@@ -431,6 +492,227 @@ function ordinal(n) {
   const s = ["th", "st", "nd", "rd"];
   const v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+// ── Local HLS proxy ──────────────────────────────────────────────────────────
+// The HLS hosts (hls2.aniwatchtv.uk and friends) sit behind Cloudflare and
+// reject any request without the embed site's Referer:
+//
+//   WITH Referer    -> 200
+//   WITHOUT Referer -> 403 Forbidden
+//
+// We cannot fix that from the renderer: "Referer" is a forbidden header name in
+// Chromium, so hls.js's `xhr.setRequestHeader('Referer', …)` is silently dropped
+// and the fetch goes out with the app's own referrer. (AllManga got away with the
+// broken approach only because its CDN never checked the header.)
+//
+// So the playlist and every segment are streamed through a loopback HTTP server
+// in the main process, which CAN set the header. Playlist bodies are rewritten so
+// their URIs point back at this proxy; segments are passed through untouched.
+
+let _proxyServer = null;
+let _proxyReferer = "https://zokoanime.video/";
+let _proxySubs = [];
+
+// Track upstream -> local path so a playlist rewrite is stable within a session.
+const _proxyPaths = new Map();
+function proxyPathFor(upstreamUrl) {
+  if (!_proxyPaths.has(upstreamUrl)) {
+    _proxyPaths.set(upstreamUrl, "/proxy?url=" + encodeURIComponent(upstreamUrl));
+  }
+  return _proxyPaths.get(upstreamUrl);
+}
+
+function upstreamFetch(url, { method = "GET", headers = {}, timeout = 20000 } = {}) {
+  return new Promise((resolve) => {
+    let u;
+    try {
+      u = new URL(url);
+    } catch {
+      return resolve({ status: 0, headers: {}, body: Buffer.alloc(0) });
+    }
+    const lib = u.protocol === "https:" ? https : http;
+    const req = lib.request(
+      {
+        hostname: u.hostname,
+        port: u.port || undefined,
+        path: u.pathname + u.search,
+        method,
+        headers: { "User-Agent": UA, Accept: "*/*", ...headers },
+        ciphers: u.protocol === "https:" ? CI : undefined,
+        timeout,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode,
+            headers: res.headers,
+            body: Buffer.concat(chunks),
+          }),
+        );
+      },
+    );
+    req.on("timeout", () => {
+      req.destroy();
+      resolve({ status: 0, headers: {}, body: Buffer.alloc(0) });
+    });
+    req.on("error", () => resolve({ status: 0, headers: {}, body: Buffer.alloc(0) }));
+    req.end();
+  });
+}
+
+const PASS_THROUGH_HEADERS = [
+  "content-type",
+  "content-length",
+  "content-range",
+  "accept-ranges",
+  "last-modified",
+  "etag",
+];
+
+function getPlayerServer() {
+  if (_proxyServer) return Promise.resolve(_proxyServer);
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(async (req, res) => {
+      const u = new URL(req.url, "http://127.0.0.1");
+
+      if (u.pathname === "/player") {
+        res.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(buildPlayerHtml());
+        return;
+      }
+
+      if (u.pathname === "/proxy") {
+        const target = u.searchParams.get("url");
+        if (!target) {
+          res.writeHead(400);
+          return res.end();
+        }
+
+        // Forward Range so seeking works, and the Referer the CDN demands.
+        const up = await upstreamFetch(target, {
+          headers: {
+            Referer: _proxyReferer,
+            Origin: _proxyReferer.replace(/\/$/, ""),
+            Range: req.headers.range || "",
+          },
+        });
+
+        if (!up.status) {
+          res.writeHead(502, { "Access-Control-Allow-Origin": "*" });
+          return res.end();
+        }
+
+        const ctype = up.headers["content-type"] || "";
+        const isPlaylist =
+          /mpegurl|vnd\.apple\.mpegurl/i.test(ctype) ||
+          /\.m3u8(\?|$)/i.test(target);
+
+        if (isPlaylist && up.status === 200) {
+          // Rewrite every non-comment URI to point back through this proxy,
+          // otherwise the player would fetch segments directly and get 403.
+          const base = target;
+          const rewritten = up.body
+            .toString("utf8")
+            .split("\n")
+            .map((line) => {
+              const t = line.trim();
+              if (!t || t.startsWith("#")) return line;
+              let abs;
+              try {
+                abs = new URL(t, base).href;
+              } catch {
+                return line;
+              }
+              return proxyPathFor(abs);
+            })
+            .join("\n");
+          res.writeHead(200, {
+            "Content-Type": "application/vnd.apple.mpegurl",
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+          });
+          return res.end(rewritten);
+        }
+
+        const out = { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" };
+        for (const h of PASS_THROUGH_HEADERS) if (up.headers[h]) out[h] = up.headers[h];
+        res.writeHead(up.status, out);
+        return res.end(up.body);
+      }
+
+      res.writeHead(404);
+      res.end();
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      _proxyServer = server;
+      resolve(server);
+    });
+    server.on("error", reject);
+  });
+}
+
+// The player page only ever talks to our own loopback origin, so hls.js fetches
+// the (already-rewritten, already-Referer'd) playlist over plain HTTP.
+function buildPlayerHtml() {
+  const subs = JSON.stringify(_proxySubs.map((s) => proxyPathFor(s)));
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{width:100%;height:100%;object-fit:contain;display:block}</style>
+</head><body>
+<video id="v" autoplay controls playsinline></video>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js"></script>
+<script>
+  const video=document.getElementById('v');
+  const src=new URLSearchParams(location.search).get('src')||'';
+  const startTime=parseFloat(new URLSearchParams(location.search).get('t')||'0');
+  const subs=${subs};
+  if(Hls.isSupported()){
+    const hls=new Hls({enableWorker:false});
+    hls.loadSource(src);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED,()=>{
+      if(startTime>0)video.currentTime=startTime;
+      video.play().catch(()=>{});
+    });
+    hls.on(Hls.Events.ERROR,(e,d)=>{
+      if(d.fatal)console.error('HLS fatal',d.type,d.details);
+    });
+  }else if(video.canPlayType('application/vnd.apple.mpegurl')){
+    video.src=src;
+    video.addEventListener('loadedmetadata',()=>{if(startTime>0)video.currentTime=startTime;},{once:true});
+  }
+  if(subs.length&&video.textTracks){
+    for(const s of subs){
+      const t=document.createElement('track');
+      t.kind='subtitles';t.src=s;t.srclang='ja';t.default=(t===subs[0]);
+      video.appendChild(t);
+    }
+  }
+</script>
+</body></html>`;
+}
+
+/**
+ * Build a local player URL for a resolved HiAnime stream. The returned page
+ * streams everything through the loopback proxy that supplies the Referer the
+ * HLS CDN requires.
+ */
+async function buildHianimePlayerUrl({ url, referer, subtitles, startTime = 0 }) {
+  _proxyReferer = referer || "https://zokoanime.video/";
+  _proxySubs = Array.isArray(subtitles) ? subtitles : [];
+  // Keep the rewrite map bounded — a long session would otherwise grow forever.
+  if (_proxyPaths.size > 500) _proxyPaths.clear();
+  const server = await getPlayerServer();
+  const port = server.address().port;
+  const proxied = proxyPathFor(url);
+  return `http://127.0.0.1:${port}/player?src=${encodeURIComponent(proxied)}&t=${startTime || 0}`;
 }
 
 // ── IPC registration ─────────────────────────────────────────────────────────
@@ -459,6 +741,24 @@ function register() {
       return { ok: false, error: e.message, episodes: [] };
     }
   });
+
+  // Hand the renderer a loopback player URL whose fetches carry the Referer the
+  // HLS CDN requires. Without this the player gets 403 on the master playlist.
+  ipcMain.handle("hianime-player-url", async (_, args) => {
+    try {
+      const { url, referer, subtitles, startTime } = args || {};
+      if (!url) return { ok: false, error: "No url provided" };
+      const playerUrl = await buildHianimePlayerUrl({
+        url,
+        referer,
+        subtitles,
+        startTime,
+      });
+      return { ok: true, playerUrl, rawUrl: url };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
 }
 
 module.exports = {
@@ -473,4 +773,6 @@ module.exports = {
   nameScore,
   norm,
   pickBest,
+  buildHianimePlayerUrl,
+  upstreamFetch,
 };

@@ -828,6 +828,44 @@ export default function TVPage({
         if (!mounted) return;
         if (res?.ok && res.url) {
           clearFailoverSource(epKey);
+          // Zokoanime is an embed service. When the blob scrape failed we get
+          // back the embed page URL instead of a stream — load it in the webview
+          // like the other embed sources (Enma / 9Anime / AnimePahe). A real page
+          // sets its own Referer, so the HLS CDN never 403s.
+          if (res.isEmbedPage) {
+            resolvedPlayerUrlRef.current = res.url;
+            setResolvedPlayerUrl(res.url);
+            setM3u8Url(null);
+            if (res.warning) console.warn("[hianime]", res.warning);
+            return;
+          }
+          // HiAnime's CDN rejects requests without the embed Referer, and the
+          // renderer cannot set that header — so use the loopback proxy player
+          // that attaches it in the main process.
+          if (playerSource === "hianime") {
+            window.electron
+              .hianimePlayerUrl({
+                url: res.url,
+                referer: res.referer,
+                subtitles: res.subtitles,
+                startTime,
+              })
+              .then((r) => {
+                if (!mounted) return;
+                if (!r?.ok || !r.playerUrl) {
+                  setResolveError(r?.error || "Failed to start local player");
+                  return;
+                }
+                resolvedPlayerUrlRef.current = r.playerUrl;
+                setResolvedPlayerUrl(r.playerUrl);
+                // Expose the raw upstream url so the download button can use it
+                setM3u8Url(res.url);
+              })
+              .catch((e) => {
+                if (mounted) setResolveError(e.message || "Failed to start local player");
+              });
+            return;
+          }
           if (res.isDirectMp4 !== undefined) {
             window.electron
               .setPlayerVideo({
