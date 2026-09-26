@@ -454,6 +454,7 @@ async function resolveHianime({ title, seasonNumber = 1, episodeNumber = 1, tran
     return {
       ok: true,
       url: qualities[0].url,
+      masterUrl: res.m3u8,
       qualities,
       subtitles: res.subtitles,
       referer: res.referer,
@@ -513,6 +514,7 @@ function ordinal(n) {
 let _proxyServer = null;
 let _proxyReferer = "https://zokoanime.video/";
 let _proxySubs = [];
+let _proxyQualities = [];
 
 // Track upstream -> local path so a playlist rewrite is stable within a session.
 const _proxyPaths = new Map();
@@ -675,9 +677,30 @@ function buildPlayerHtml() {
   const subs = JSON.stringify(tracks);
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8">
-<style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{width:100%;height:100%;object-fit:contain;display:block}</style>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;background:#000;overflow:hidden;color:#fff}
+.wrap{position:relative;width:100%;height:100%}
+video{width:100%;height:100%;object-fit:contain;display:block}
+#q{position:absolute;top:12px;right:12px;z-index:10;background:rgba(0,0,0,.72);
+   color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:6px;
+   padding:6px 9px;font:12px/1.3 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+   cursor:pointer;outline:none;backdrop-filter:blur(4px);opacity:.45;transition:opacity .18s}
+#q:hover,#q:focus{opacity:1}
+#q option{background:#111;color:#fff}
+#qinfo{position:absolute;top:12px;left:12px;z-index:10;background:rgba(0,0,0,.72);
+   border:1px solid rgba(255,255,255,.22);border-radius:6px;padding:6px 10px;
+   font:12px/1.3 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;opacity:.45;
+   transition:opacity .18s;pointer-events:none}
+body:hover #q,body:hover #qinfo{opacity:1}
+#qinfo.off{display:none}
+</style>
 </head><body>
+<div class="wrap">
 <video id="v" autoplay controls playsinline></video>
+<div id="qinfo" class="off"></div>
+<select id="q" style="display:none" aria-label="Video quality"></select>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js"></script>
 <script>
   const video=document.getElementById('v');
@@ -718,6 +741,66 @@ function buildPlayerHtml() {
     hls.on(Hls.Events.ERROR,(e,d)=>{
       if(d.fatal)console.error('HLS fatal',d.type,d.details);
     });
+
+    // ── Quality selector ────────────────────────────────────────────────
+    // Reads the real parsed levels rather than the resolver's list, so the
+    // labels always match what hls.js can actually play. The choice is stored
+    // as a resolution string (not a level index) because the available ladders
+    // differ per title — an index saved for one episode can point at another
+    // rendition on the next.
+    const q=document.getElementById('q');
+    const info=document.getElementById('qinfo');
+    const PREF_KEY='streambert.hianime.quality';
+    const levelsOf=()=>(hls.levels||[]).map((l,i)=>({
+      i,
+      label:(l.height?l.height+'p':'?')+(l.width?(' \\u00d7 '+l.width):''),
+      h:l.height||0,
+    }));
+    function renderQuality(){
+      const ls=levelsOf();
+      if(ls.length<2){info.classList.add('off');q.style.display='none';return}
+      let pref=0;try{pref=localStorage.getItem(PREF_KEY)||''}catch(e){}
+      q.innerHTML='';
+      const optAuto=document.createElement('option');
+      optAuto.value='auto';optAuto.textContent='Auto';
+      q.appendChild(optAuto);
+      ls.forEach(l=>{
+        const o=document.createElement('option');
+        o.value=String(l.h);o.textContent=l.label;
+        q.appendChild(o);
+      });
+      // Default: honour the saved preference when this ladder has it, else Auto.
+      const has=ls.some(l=>String(l.h)===pref);
+      q.value=has?pref:'auto';
+      hls.currentLevel=has?ls.find(l=>String(l.h)===pref).i:-1;
+      q.style.display='';
+      const showAuto=q.value==='auto';
+      info.classList.toggle('off',!showAuto);
+      info.textContent=showAuto?'Auto ('+ls[ls.length-1].label+')':'';
+    }
+    q.addEventListener('change',()=>{
+      const ls=levelsOf();
+      if(q.value==='auto'){
+        hls.currentLevel=-1;
+        try{localStorage.removeItem(PREF_KEY)}catch(e){}
+        info.textContent='Auto ('+ls[ls.length-1].label+')';
+        info.classList.remove('off');
+        return;
+      }
+      const hit=ls.find(l=>String(l.h)===q.value);
+      if(hit){
+        const t=video.currentTime;
+        hls.currentLevel=hit.i;
+        video.currentTime=t;
+        try{localStorage.setItem(PREF_KEY,q.value)}catch(e){}
+        info.classList.add('off');
+      }
+    });
+    hls.on(Hls.Events.MANIFEST_PARSED,renderQuality);
+    hls.on(Hls.Events.LEVEL_SWITCHED,()=>{
+      const l=hls.levels&&hls.levels[hls.currentLevel];
+      if(l&&q.value!=='auto'){/* keep the explicit label as chosen */}
+    });
   }else if(video.canPlayType('application/vnd.apple.mpegurl')){
     video.src=src;
     video.addEventListener('loadedmetadata',start,{once:true});
@@ -731,14 +814,34 @@ function buildPlayerHtml() {
  * streams everything through the loopback proxy that supplies the Referer the
  * HLS CDN requires.
  */
-async function buildHianimePlayerUrl({ url, referer, subtitles, startTime = 0 }) {
+async function buildHianimePlayerUrl({
+  url,
+  referer,
+  subtitles,
+  startTime = 0,
+  masterUrl = null,
+  qualities = null,
+}) {
   _proxyReferer = referer || "https://zokoanime.video/";
   _proxySubs = Array.isArray(subtitles) ? subtitles : [];
   // Keep the rewrite map bounded — a long session would otherwise grow forever.
   if (_proxyPaths.size > 500) _proxyPaths.clear();
   const server = await getPlayerServer();
   const port = server.address().port;
-  const proxied = proxyPathFor(url);
+  // When the master playlist advertises several variants, hand hls.js the
+  // *master* (through the proxy) so it parses the levels itself and can switch
+  // between them without reloading. Otherwise fall back to the chosen variant.
+  const list = Array.isArray(qualities) ? qualities : null;
+  const useMaster = masterUrl && list && list.length > 1;
+  const streamUrl = useMaster ? masterUrl : url;
+  const proxied = proxyPathFor(streamUrl);
+  _proxyQualities = useMaster
+    ? list.map((q, i) => ({
+        index: i,
+        resolution: q.resolution || "?",
+        bandwidth: q.bandwidth || 0,
+      }))
+    : [];
   return `http://127.0.0.1:${port}/player?src=${encodeURIComponent(proxied)}&t=${startTime || 0}`;
 }
 

@@ -404,6 +404,8 @@ export default function MoviePage({
           window.electron
             .hianimePlayerUrl({
               url: res.url,
+              masterUrl: res.masterUrl,
+              qualities: res.qualities,
               referer: res.referer,
               subtitles: res.subtitles,
               startTime,
