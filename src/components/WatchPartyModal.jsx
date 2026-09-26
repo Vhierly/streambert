@@ -5,7 +5,7 @@ import {
   watchPartyLeaveRoom,
   watchPartyGetParticipants,
   watchPartyGetRoomCode,
-  watchpartyIsHost,
+  watchPartyIsHost,
   watchPartySendChat,
   watchPartyOnChange,
 } from "../utils/watchParty";
