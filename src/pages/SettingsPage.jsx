@@ -589,6 +589,13 @@ function VersionSection() {
   });
   const [dnsSaved, setDnsSaved] = useState(false);
 
+  // The main process has no localStorage, so mirror the value across on every
+  // change and once on mount. Without this the toggle was a no-op: the main
+  // process threw a ReferenceError reading localStorage and defaulted to off.
+  useEffect(() => {
+    window.electron?.setDnsAdblock?.(dnsAdblock);
+  }, [dnsAdblock]);
+
   const toggleDnsAdblock = (val) => {
     setDnsAdblock(val);
     localStorage.setItem("streambert_dnsAdblock", val ? "1" : "0");

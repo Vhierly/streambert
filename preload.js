@@ -95,6 +95,16 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.removeListener("blocked-stats-update", h),
   getBlockStats: () => ipcRenderer.invoke("get-block-stats"),
 
+  // AdGuard DNS ad blocking: the preference lives in renderer localStorage, so the
+  // main process has to be told about it — it has no localStorage of its own.
+  setDnsAdblock: (value) => ipcRenderer.send("set-dns-adblock", !!value),
+  onDnsAdblockApplied: (cb) => {
+    const h = (_e, v) => cb(v);
+    ipcRenderer.on("dns-adblock-applied", h);
+    return h;
+  },
+  offDnsAdblockApplied: (h) => ipcRenderer.removeListener("dns-adblock-applied", h),
+
   // Desktop notifications (triggered from renderer, executed in main)
   showNotification: ({ title, body, silent }) =>
     ipcRenderer.invoke("show-notification", { title, body, silent }),

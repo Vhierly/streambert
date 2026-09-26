@@ -11,6 +11,7 @@ const {
   Notification,
 } = require("electron");
 const path = require("path");
+const fs = require("fs");
 
 // -- RAM / performance flags ---------------------------------------------------
 app.commandLine.appendSwitch(
@@ -41,12 +42,43 @@ const _bench = (label) =>
 // Can be disabled via Settings → General → DNS Ad Blocking.
 const DNS_ADBLOCK_ENABLE_KEY = "streambert_dnsAdblock";
 
+// The AdGuard DNS switch is a *renderer* localStorage value — the main process
+// has no localStorage at all, so reading it here used to throw a ReferenceError
+// and silently disable the feature every launch. Keep a main-process mirror that
+// the renderer keeps in sync over IPC; fall back to that mirror on next start
+// (when the renderer has not reported the current value yet).
+let _dnsAdblockCache = false;
 function isDnsAdblockEnabled() {
+  return _dnsAdblockCache === true;
+}
+
+ipcMain.on("set-dns-adblock", (_e, value) => {
+  _dnsAdblockCache = value === true || value === "1";
+  console.log("[dns] AdGuard DNS ad blocking:", _dnsAdblockCache ? "ON" : "OFF");
+  // Persist so the next launch can apply --dns-server before ready.
   try {
-    return localStorage.getItem(DNS_ADBLOCK_ENABLE_KEY) === "1";
-  } catch {
-    return false;
+    const f = path.join(app.getPath("userData"), "dns-adblock.json");
+    fs.writeFileSync(f, JSON.stringify({ enabled: _dnsAdblockCache }));
+  } catch (e) {
+    console.warn("[dns] could not persist setting:", e.message);
   }
+  // Chromium only reads --dns-server at process start, so a live toggle cannot
+  // take effect without a restart. Say so instead of pretending it did.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("dns-adblock-applied", _dnsAdblockCache);
+  }
+});
+
+// Restore the last known value at startup, before app.whenReady().
+try {
+  const f = path.join(app.getPath("userData"), "dns-adblock.json");
+  if (fs.existsSync(f)) {
+    const j = JSON.parse(fs.readFileSync(f, "utf8"));
+    _dnsAdblockCache = j.enabled === true;
+    console.log("[dns] restored AdGuard DNS setting:", _dnsAdblockCache);
+  }
+} catch {
+  /* first run, or unreadable file — default stays off */
 }
 
 function applyDnsAdblock() {
@@ -55,24 +87,9 @@ function applyDnsAdblock() {
   // 94.140.14.14 = default, 94.140.15.15 = family (blocks adult content too)
   const dnsServers = "94.140.14.14,94.140.15.15";
 
-  // Apply to command line (main process)
+  // Must be set before app.whenReady() for Chromium to honour it.
   app.commandLine.appendSwitch("dns-server", dnsServers);
-  console.log("[dns] AdGuard DNS ad blocking enabled");
-
-  // Apply to all sessions (player, trailer, default)
-  const sessions = [
-    session.defaultSession,
-    session.fromPartition("persist:player"),
-    session.fromPartition("persist:trailer"),
-  ];
-  for (const s of sessions) {
-    try {
-      s.setProxy({ proxyRules: `direct://`, pacUrl: "" });
-      // Electron doesn't have a direct setDNS API, but we can use
-      // hostResolver to influence DNS. The commandLine switch above
-      // affects the Chromium network stack which covers all sessions.
-    } catch {}
-  }
+  console.log("[dns] AdGuard DNS servers applied:", dnsServers);
 }
 
 // Apply DNS ad blocking before app is ready (must be before app.whenReady)
@@ -87,7 +104,6 @@ const hianimeIpc = require("./src/ipc/hianime");
 const playerIpc = require("./src/ipc/player");
 const discordRpc = require("./src/ipc/discordRpc");
 
-// -- Ad/tracker block list -----------------------------------------------------
 const BLOCKED_HOSTS = [
   "*://www.google-analytics.com/*",
   "*://analytics.google.com/*",
@@ -280,6 +296,232 @@ const BLOCKED_HOSTS = [
   "*://tmstr4.cloudnestra.com/*",
   "*://tmstr4.neonhorizonworkshops.com/*",
 ];
+// ── Ad / tracker matching ────────────────────────────────────────────────────
+// The blocklist is a list of `*://host/path` patterns, but hand-rolled matching
+// against them leaks in two ways that were observed in practice:
+//
+//   * `*://my.rtmark.net/*` (no wildcard) only ever matched that exact host, so
+//     any subdomain of the same domain sailed through.
+//   * Patterns were compared as raw strings in one handler and hand-parsed in
+//     another, so the two could disagree.
+//
+// Normalise every pattern to a bare hostname once, then match on suffixes, so
+// `ads.foo.com` covers `foo.com`, `cdn.ads.foo.com` and `ads.foo.com`.
+const BLOCKED_HOSTNAMES = (() => {
+  const out = new Set();
+  for (const pat of BLOCKED_HOSTS) {
+    const m = pat.match(/^\*:\/\/([^/]+)/);
+    if (!m) continue;
+    let h = m[1].toLowerCase();
+    if (h.startsWith("*.")) h = h.slice(2);
+    out.add(h);
+  }
+  return [...out];
+})();
+
+// Hostname fragments that are ad infrastructure no matter which site serves
+// them. Modern streaming players are wrapped by ID-graph / user-sync platforms
+// whose hostnames carry no "ads" substring, so a pure name-based list misses
+// them. These are matched as suffixes against the registrable domain too.
+const AD_HOST_SUFFIXES = [
+  // verified leaking through the old list
+  "rtmark.net",
+  "adsrvr.org",
+  "adscale.de",
+  "pubmatic.com",
+  "adform.net",
+  "smartadserver.com",
+  "smaato.net",
+  "adnxs.com",
+  "3lift.com",
+  "id5-sync.com",
+  "ingage.tech",
+  "connatix.com",
+  "casalemedia.com",
+  "sharethrough.com",
+  "inmobi.com",
+  "liadm.com",
+  "iqm.com",
+  "openx.net",
+  "rubiconproject.com",
+  "sitescout.com",
+  "tapad.com",
+  "criteo.com",
+  "criteo.net",
+  "bluekai.com",
+  "krxd.net",
+  "agkn.com",
+  "demdex.net",
+  "everesttech.net",
+  "exelator.com",
+  "bidswitch.net",
+  "contextweb.com",
+  "adform.net",
+  "advertising.com",
+  "amazon-adsystem.com",
+  "yieldmo.com",
+  "mediavine.com",
+  "outbrain.com",
+  "taboola.com",
+  "adsyield.com",
+  "monetizeprotection.com",
+  "adcash.com",
+  "propellerads.com",
+  "popads.net",
+  "popcash.net",
+  "hilltopads.net",
+  "exoclick.com",
+  "clickadu.com",
+  "adskeeper.com",
+  "trafficjunky.net",
+  "juicyads.com",
+  "onclickalgo.com",
+  "adcash.com",
+  "zedo.com",
+  "revcontent.com",
+  "mgid.com",
+  "adblade.com",
+  "bidvertiser.com",
+  "adf.ly",
+  "shorte.st",
+  // JW Player ad delivery (jwpltx) and 1rx identity sync
+  "jwpltx.com",
+  "1rx.io",
+];
+
+// Path/query fragments that mark a request as advertising even on a host we
+// would otherwise have to allow (the player host itself, CDNs, etc).
+const AD_URL_PATTERNS = [
+  /\/ads?\//i,
+  /\/advert/i,
+  /\/banner\//i,
+  /\/popunder/i,
+  /\/popunder\.php/i,
+  /\/interstitial/i,
+  /\/preroll/i,
+  /\/midroll/i,
+  /\/googleads/i,
+  /\/gpt\/prebid/i,
+  /\/(?:ads|gdt|pubads|adserver|adframe|adslot)\b/i,
+  /[?&](?:ad|ads|adid|adslot|ad_type|adType|advert|adzone|campaign_id|placement|prebid|pbjs|prebidjs|ad_units|sz|size)=/i,
+  /\/(?:pixel|beacon|collect|track|telemetry|analytics|metrics|stats)\b\/(?:gif|png|js|collect|view|imp|event)/i,
+  /\/(?:s|p|cm|cmx|cookiesync|usync|ssync|user-sync|id5\/sync)\.(?:html?|php|js)?(?:\?|$)/i,
+  /\/match\.(?:adsrvr\.org|sharethrough\.com)/i,
+  /\/getuid\b/i,
+  /\/cm\/pixel/i,
+  /sync\.?(?:inmobi|casalemedia|id5|ingage)/i,
+  /jwpltx\.com/i,
+  /\/(?:prebid|ad-gateway|adgateway)\b/i,
+];
+
+function isAdHost(host) {
+  if (!host) return false;
+  const h = host.toLowerCase();
+  // exact list match (covers the *. wildcard entries and their bare domains)
+  for (const pat of BLOCKED_HOSTNAMES) {
+    if (h === pat || h.endsWith("." + pat)) return true;
+  }
+  // known ad infrastructure, matched on the last two or three labels
+  const labels = h.split(".");
+  const tail2 = labels.slice(-2).join(".");
+  const tail3 = labels.slice(-3).join(".");
+  for (const sfx of AD_HOST_SUFFIXES) {
+    if (h === sfx || tail2 === sfx || tail3 === sfx) return true;
+    if (h.endsWith("." + sfx)) return true;
+  }
+  return false;
+}
+
+function isAdUrl(url) {
+  for (const re of AD_URL_PATTERNS) {
+    if (re.test(url)) return true;
+  }
+  return false;
+}
+
+// ── Cosmetic filtering ───────────────────────────────────────────────────────
+// Network blocking cannot catch ads rendered from the player host itself, nor
+// elements injected by the ad script before a request is ever made. This runs
+// in every player/trailer webview and hides ad containers by selector, clears
+// stray ad iframes, and neutralises the usual "push a popunder" hooks.
+const COSMETIC_CSS = `
+  [class*="ad-container"],[class*="ad_wrapper"],[class*="ad-wrapper"],[class*="adunit"],
+  [class*="ad-unit"],[class*="adUnit"],[class*="adsbygoogle"],[id*="ad-container"],
+  [id^="google_ads_"],[id^="div-gpt-ad"],[id^="ad-slot"],[id^="banner"],
+  [class*="banner"],[class*="sponsor"],[class*="promo-box"],[class*="popunder"],
+  [class*="interstitial"],[class*="sticky-ads"],[class*="bottom-ads"],
+  [class*="top-ad"],[class*="ad-slot"],[data-ad-slot],[data-ad-client],
+  ins.adsbygoogle,[id*="taboola"],[class*="taboola"],[id*="outbrain"],
+  [class*="OUTBRAIN"],[id*="trending-promo"],[class*="promo-content"],
+  [class*="floating-ad"],[class*="rekt-ad"],[class*="ad-leaderboard"],
+  iframe[src*="doubleclick" i],iframe[src*="googlesyndication" i],
+  iframe[src*="/ads/" i],iframe[src*="adservice" i],iframe[src*="adserver" i],
+  iframe[id^="google_ads_" i],iframe[name^="google_ads_" i]
+  { display:none !important; visibility:hidden !important; height:0 !important;
+    min-height:0 !important; max-height:0 !important; margin:0 !important;
+    padding:0 !important; opacity:0 !important; pointer-events:none !important; }
+`;
+
+const COSMETIC_JS = `
+(function(){
+  if (window.__streambertAdblock) return;
+  window.__streambertAdblock = true;
+  var SEL = ['[class*="ad-container"]','[class*="ad_wrapper"]','[class*="ad-wrapper"]',
+    '[class*="adunit"]','[class*="ad-unit"]','[class*="adUnit"]','.adsbygoogle',
+    '[id*="google_ads_"]','[id^="div-gpt-ad"]','[id^="ad-slot"]','[id^="banner"]',
+    '[class*="banner"]','[class*="sponsor"]','[class*="popunder"]','[class*="interstitial"]',
+    '[class*="sticky-ads"]','[class*="bottom-ads"]','[class*="floating-ad"]','[class*="rekt-ad"]',
+    'ins.adsbygoogle','[data-ad-slot]','[data-ad-client]','[id*="taboola"]','[class*="taboola"]',
+    '[id*="outbrain"]','[class*="promo-content"]','[class*="trending-promo"]'];
+  function scrub(){
+    // remove ad iframes outright — hiding them still leaves layout holes
+    document.querySelectorAll('iframe[src*="doubleclick" i],iframe[src*="googlesyndication" i],'
+      + 'iframe[src*="/ads/" i],iframe[src*="adserver" i],iframe[id^="google_ads_" i]')
+      .forEach(function(f){ try{ f.remove(); }catch(e){} });
+    SEL.forEach(function(s){
+      document.querySelectorAll(s).forEach(function(el){
+        if (el.closest('video') || el.querySelector('video')) return; // never hide the player
+        el.style.setProperty('display','none','important');
+      });
+    });
+  }
+  // Neutralise the classic popunder/redirect hooks, preserving player APIs.
+  ['open','onbeforeunload'].forEach(function(name){
+    try {
+      var orig = window[name];
+      if (typeof orig !== 'function') return;
+      window[name] = function(url){
+        if (typeof url === 'string'
+            && /(^|[?&])(ad|ads|popunder|redirect|notallowed|pop=)/i.test(url)) {
+          return null;
+        }
+        return orig.apply(this, arguments);
+      };
+    } catch(e){}
+  });
+  function boot(){
+    scrub();
+    try {
+      new MutationObserver(scrub).observe(document.documentElement||document,
+        {childList:true,subtree:true});
+    } catch(e){}
+  }
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+`;
+
+// Inject into every frame of a webview once it settles, and re-apply on load.
+function installCosmeticFilter(contents) {
+  const inject = () => {
+    contents.executeJavaScript(COSMETIC_JS).catch(() => {});
+  };
+  contents.on("did-finish-load", inject);
+  contents.on("did-frame-finish-load", inject);
+  inject();
+}
+
 
 // -- Module-level state --------------------------------------------------------
 let mainWindow = null;
@@ -314,9 +556,20 @@ function setupSession(playerSession, trailerSession) {
   );
 
   // Trailer: block ads only (no media intercept needed)
-  trailerSession.webRequest.onBeforeRequest({ urls: BLOCKED_HOSTS }, (_, cb) =>
-    cb({ cancel: true }),
-  );
+  trailerSession.webRequest.onBeforeRequest({ urls: ["*://*/*"] }, (details, cb) => {
+    let host = "";
+    try {
+      host = new URL(details.url).hostname;
+    } catch {}
+    // Media must never be cancelled here — trailers are HLS too.
+    const isMedia = /\.(m3u8|ts|mp4|webm|vtt|m4s)(\?|$)/i.test(details.url);
+    if (isMedia) return cb({});
+    if (isAdHost(host) || isAdUrl(details.url)) {
+      blockStats.recordBlockedRequest(details.url);
+      return cb({ cancel: true });
+    }
+    cb({});
+  });
 
   // Player session: block ads + intercept m3u8/vtt URLs for renderer
   const MEDIA_URLS = [
@@ -326,42 +579,41 @@ function setupSession(playerSession, trailerSession) {
     "*://*/*.vtt",
   ];
   playerSession.webRequest.onBeforeRequest(
-    { urls: [...BLOCKED_HOSTS, ...MEDIA_URLS] },
+    { urls: [...BLOCKED_HOSTS, ...MEDIA_URLS, "*://*/*"] },
     (details, callback) => {
       const { url } = details;
-      const isMedia = url.includes(".m3u8") || url.includes(".vtt");
-      if (!isMedia) {
-        blockStats.recordBlockedRequest(url);
-        callback({ cancel: true });
-        return;
-      }
-      // Media URL: check if it also happens to be on a blocked domain
+      const isMedia = /\.(m3u8|vtt|ts|mp4|webm|m4s)(\?|$)/i.test(url);
+      let host = "";
       try {
-        const host = new URL(url).hostname;
-        const blocked = BLOCKED_HOSTS.some((pat) => {
-          const hostPat = pat.replace(/^\*:\/\//, "").split("/")[0];
-          return hostPat.startsWith("*.")
-            ? host.endsWith(hostPat.slice(1))
-            : host === hostPat || host === hostPat.replace(/^\*\./, "");
-        });
-        if (blocked) {
-          blockStats.recordBlockedRequest(url);
-          callback({ cancel: true });
-          return;
-        }
+        host = new URL(url).hostname;
       } catch {}
-      // Pass through + notify renderer
-      const mw = getMainWindow();
-      if (mw && !mw.isDestroyed()) {
-        if (url.includes(".m3u8")) {
-          mw.webContents.send("m3u8-found", url);
-        } else if (url.includes(".vtt")) {
-          const { extractSubtitleLang } = require("./src/ipc/subtitles");
-          mw.webContents.send("subtitle-found", {
-            url,
-            lang: extractSubtitleLang(url),
-          });
+
+      // Media first, and never block it just because the path happens to look
+      // ad-ish (a segment can legitimately live under /ads/ on a shared CDN).
+      if (isMedia) {
+        // ...unless it is on a known ad host outright.
+        if (isAdHost(host)) {
+          blockStats.recordBlockedRequest(url);
+          return callback({ cancel: true });
         }
+        const mw = getMainWindow();
+        if (mw && !mw.isDestroyed()) {
+          if (url.includes(".m3u8")) {
+            mw.webContents.send("m3u8-found", url);
+          } else if (url.includes(".vtt")) {
+            const { extractSubtitleLang } = require("./src/ipc/subtitles");
+            mw.webContents.send("subtitle-found", {
+              url,
+              lang: extractSubtitleLang(url),
+            });
+          }
+        }
+        return callback({});
+      }
+
+      if (isAdHost(host) || isAdUrl(url)) {
+        blockStats.recordBlockedRequest(url);
+        return callback({ cancel: true });
       }
       callback({});
     },
@@ -477,6 +729,11 @@ function createWindow() {
       if (wc.session === session.fromPartition("persist:player")) {
         playerWcIds.add(wc.id);
         wc.once("destroyed", () => playerWcIds.delete(wc.id));
+        // Cosmetic ad filtering: network rules cannot see ads served by the
+        // player host itself, so scrub the DOM in the webview as well.
+        installCosmeticFilter(wc);
+      } else if (wc.session === session.fromPartition("persist:trailer")) {
+        installCosmeticFilter(wc);
       }
     } catch {}
 
