@@ -46,6 +46,9 @@
       "buildResources": "build"
     },
     "files": [
+      "!node_modules/**",
+      "node_modules/electron-updater/**",
+      "node_modules/electron-dl/**",
       "dist/**/*",
       "!dist/mac/**",
       "!dist/mac-arm64/**",

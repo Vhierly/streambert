@@ -303,7 +303,7 @@ function register(getMainWindow, { writeSecretMigration }) {
     return null;
   });
 
-  ipcMain.handle("download-and-install-update", async (_, { url, format }) => {
+  ipcMain.handle("download-and-install-update", async (_, { url, format, expectedSha256 }) => {
     try {
       const ALLOWED_FORMATS = [
         "exe",
@@ -436,6 +436,32 @@ function register(getMainWindow, { writeSecretMigration }) {
       });
 
       if (signal.aborted) return { ok: false, error: "Cancelled" };
+
+      // ── Integrity check ────────────────────────────────────────────────────
+      // Everything downstream of here chmods and spawns the file, so a
+      // download that was tampered with in transit (or a release asset that
+      // was replaced) would execute arbitrary code. When the caller supplied
+      // the expected digest, verify the bytes on disk before installing.
+      // Absence of a digest is not treated as a pass: the caller decides
+      // whether to proceed unverified (see verifyUpdate below).
+      if (expectedSha256) {
+        const crypto = require("crypto");
+        const actual = crypto.createHash("sha256").update(fs.readFileSync(destPath)).digest("hex");
+        if (actual.toLowerCase() !== String(expectedSha256).toLowerCase()) {
+          try {
+            fs.unlinkSync(destPath);
+          } catch {}
+          return {
+            ok: false,
+            error: "Checksum mismatch — the downloaded update was discarded.",
+            expected: expectedSha256,
+            actual,
+          };
+        }
+        console.log("[update] sha256 verified");
+      } else {
+        console.warn("[update] no published checksum for this asset — installing unverified");
+      }
 
       // ── Helper: send "Installing…" to renderer ──────────────────────────────
       const sendInstalling = () => {

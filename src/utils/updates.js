@@ -102,6 +102,32 @@ export async function checkForUpdates(source = DEFAULT_UPDATE_SOURCE) {
     else if (name.endsWith(".exe")) assets.exe = downloadUrl;
     else if (name.endsWith(".pacman")) assets.pacman = downloadUrl;
     else if (name.endsWith(".dmg")) assets.dmg = downloadUrl;
+    // SHA256SUMS.txt is published by the release workflow. It is optional —
+    // a release without it still works, it just cannot be verified.
+    else if (name === "sha256sums.txt") assets.sha256sums = downloadUrl;
+  }
+
+  // Fetch the published digests so the installer can verify what it downloads.
+  // Nothing is trusted on the basis of these being present; they are only
+  // used when a matching entry exists.
+  let digests = null;
+  if (assets.sha256sums) {
+    try {
+      const sumRes = await fetch(assets.sha256sums, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (sumRes.ok) {
+        const text = await sumRes.text();
+        const map = {};
+        for (const line of text.split("\n")) {
+          const m = line.trim().match(/^([0-9a-f]{64})\s+\*?(.+)$/i);
+          if (m) map[m[2].trim().toLowerCase()] = m[1].toLowerCase();
+        }
+        if (Object.keys(map).length) digests = map;
+      }
+    } catch {
+      digests = null;
+    }
   }
 
   return {
@@ -112,6 +138,7 @@ export async function checkForUpdates(source = DEFAULT_UPDATE_SOURCE) {
     url,
     changelog: data.body || "",
     assets,
+    digests,
     hasUpdate: latestRaw !== "" && semverGt(latestParts, currentParts),
   };
 }

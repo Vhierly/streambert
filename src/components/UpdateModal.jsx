@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 
 // ── Image component that proxies through Electron main process ────────────────
 // Fixes Codeberg (and other external) images being blocked by Electron's CSP.
@@ -439,7 +439,8 @@ export default function UpdateModal({
   activeDownloads = 0,
   onClose,
 }) {
-  const { latest, current, url, changelog, assets, sourceLabel } = updateInfo;
+  const { latest, current, url, changelog, assets, digests, sourceLabel } =
+    updateInfo;
 
   const [phase, setPhase] = useState("idle"); // idle | downloading | installing | done | error
   const [format, setFormat] = useState(null); // "appimage" | "deb" | "exe" | "dmg" | null
@@ -471,6 +472,16 @@ export default function UpdateModal({
   }, []);
 
   const assetUrl = format && assets?.[format];
+  // SHA256SUMS.txt is keyed by asset filename, so recover the name from the
+  // download URL rather than guessing at an extension.
+  const assetName = useMemo(() => {
+    if (!assetUrl) return null;
+    try {
+      return decodeURIComponent(assetUrl.split("/").pop() || "").toLowerCase();
+    } catch {
+      return null;
+    }
+  }, [assetUrl]);
   const canInstall =
     format && assetUrl && activeDownloads === 0 && phase === "idle";
 
@@ -485,6 +496,11 @@ export default function UpdateModal({
       const result = await window.electron.downloadAndInstallUpdate({
         url: assetUrl,
         format,
+        // The main process hashes the file and refuses to run it when this
+        // does not match. Optional: older releases publish no SHA256SUMS, in
+        // which case the install proceeds and the main process logs that it
+        // could not verify.
+        expectedSha256: (assetName && digests?.[assetName]) ?? null,
       });
       if (cancelRef.current) return;
       if (!result.ok) throw new Error(result.error || "Update failed");
