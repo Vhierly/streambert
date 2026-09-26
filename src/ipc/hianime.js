@@ -525,7 +525,60 @@ function proxyPathFor(upstreamUrl) {
   return _proxyPaths.get(upstreamUrl);
 }
 
-function upstreamFetch(url, { method = "GET", headers = {}, timeout = 20000 } = {}) {
+// ── SSRF guard ───────────────────────────────────────────────────────────────
+// /proxy fetches whatever `url` it is handed, and it listens on loopback while
+// the renderer also loads *remote* pages in a webview (the Zokoanime embed
+// fallback). Without a guard those pages could pivot through this server to
+// reach anything the machine can reach — link-local metadata endpoints, other
+// localhost services, private LAN hosts. Only ever proxy the stream hosts we
+// actually resolved, plus the known CDN suffixes behind this provider.
+const PROXY_ALLOWED_SUFFIXES = [
+  "aniwatchtv.uk",
+  "aniwatchtv.com",
+  "zokoanime.video",
+  "zokoanime.com",
+];
+// Exact hosts registered by the current resolve, so a CDN on an unexpected
+// domain still works without opening the proxy to everything.
+const _proxyAllowedHosts = new Set();
+
+function isProxyAllowed(rawUrl) {
+  let u;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+  const h = u.hostname.toLowerCase();
+  if (_proxyAllowedHosts.has(h)) return true;
+  for (const sfx of PROXY_ALLOWED_SUFFIXES) {
+    if (h === sfx || h.endsWith("." + sfx)) return true;
+  }
+  return false;
+}
+
+function allowProxyHosts(urls) {
+  for (const raw of urls || []) {
+    if (!raw) continue;
+    try {
+      _proxyAllowedHosts.add(new URL(raw).hostname.toLowerCase());
+    } catch {
+      /* ignore malformed */
+    }
+  }
+  // Keep the set from growing without bound over a long session.
+  if (_proxyAllowedHosts.size > 50) _proxyAllowedHosts.clear();
+}
+
+// A playlist body is small; a misbehaving or hostile upstream could otherwise
+// stream an unbounded response into memory. Segments top out around a few MB.
+const PROXY_MAX_BODY = 24 * 1024 * 1024;
+
+function upstreamFetch(
+  url,
+  { method = "GET", headers = {}, timeout = 20000, maxBytes = PROXY_MAX_BODY } = {},
+) {
   return new Promise((resolve) => {
     let u;
     try {
@@ -546,7 +599,23 @@ function upstreamFetch(url, { method = "GET", headers = {}, timeout = 20000 } = 
       },
       (res) => {
         const chunks = [];
-        res.on("data", (c) => chunks.push(c));
+        let received = 0;
+        res.on("data", (c) => {
+          received += c.length;
+          if (received > maxBytes) {
+            // Refuse rather than buffer without limit; playlists are text, so a
+            // body this large means something is wrong upstream.
+            req.destroy();
+            resolve({
+              status: res.statusCode,
+              headers: res.headers,
+              body: Buffer.alloc(0),
+              tooLarge: true,
+            });
+            return;
+          }
+          chunks.push(c);
+        });
         res.on("end", () =>
           resolve({
             status: res.statusCode,
@@ -581,11 +650,29 @@ function getPlayerServer() {
       const u = new URL(req.url, "http://127.0.0.1");
 
       if (u.pathname === "/player") {
+        const nonce = require("crypto").randomBytes(16).toString("base64");
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
+          // The page only ever talks to our own loopback origin. It does need
+          // hls.js from a CDN, so allow that script explicitly; the stream
+          // media itself is same-origin via /proxy. Without this the page runs
+          // with 'unsafe-eval' and no origin restriction, which Electron flags.
+          "Content-Security-Policy": [
+            "default-src 'none'",
+            `script-src 'self' https://cdn.jsdelivr.net 'nonce-${nonce}'`,
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data:",
+            "media-src 'self' blob:",
+            "connect-src 'self'",
+            "font-src 'self'",
+            "frame-ancestors 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+          ].join("; "),
+          "X-Content-Type-Options": "nosniff",
         });
-        res.end(buildPlayerHtml());
+        res.end(buildPlayerHtml(nonce));
         return;
       }
 
@@ -595,9 +682,18 @@ function getPlayerServer() {
           res.writeHead(400);
           return res.end();
         }
+        // SSRF guard: this endpoint is reachable by whatever page the renderer
+        // has loaded, including remote embeds, so it must not fetch arbitrary
+        // targets. See isProxyAllowed().
+        if (!isProxyAllowed(target)) {
+          res.writeHead(403, { "Access-Control-Allow-Origin": "*" });
+          return res.end();
+        }
 
         // Forward Range so seeking works, and the Referer the CDN demands.
         const up = await upstreamFetch(target, {
+          // Playlists are tiny; only the media path needs the large cap.
+          maxBytes: 2 * 1024 * 1024,
           headers: {
             Referer: _proxyReferer,
             Origin: _proxyReferer.replace(/\/$/, ""),
@@ -606,6 +702,10 @@ function getPlayerServer() {
         });
 
         if (!up.status) {
+          res.writeHead(502, { "Access-Control-Allow-Origin": "*" });
+          return res.end();
+        }
+        if (up.tooLarge) {
           res.writeHead(502, { "Access-Control-Allow-Origin": "*" });
           return res.end();
         }
@@ -662,7 +762,7 @@ function getPlayerServer() {
 
 // The player page only ever talks to our own loopback origin, so hls.js fetches
 // the (already-rewritten, already-Referer'd) playlist over plain HTTP.
-function buildPlayerHtml() {
+function buildPlayerHtml(nonce) {
   // Normalise whatever the resolver produced (bare URLs, or {src,lang,label}
   // objects) into track descriptors, and route each through the proxy so the
   // VTT request also carries the Referer the CDN demands.
@@ -702,7 +802,7 @@ body:hover #q,body:hover #qinfo{opacity:1}
 <select id="q" style="display:none" aria-label="Video quality"></select>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js"></script>
-<script>
+<script nonce="${nonce}">
   const video=document.getElementById('v');
   const src=new URLSearchParams(location.search).get('src')||'';
   const startTime=parseFloat(new URLSearchParams(location.search).get('t')||'0');
@@ -824,6 +924,7 @@ async function buildHianimePlayerUrl({
 }) {
   _proxyReferer = referer || "https://zokoanime.video/";
   _proxySubs = Array.isArray(subtitles) ? subtitles : [];
+  allowProxyHosts([url, masterUrl, ...(Array.isArray(subtitles) ? subtitles : [])]);
   // Keep the rewrite map bounded — a long session would otherwise grow forever.
   if (_proxyPaths.size > 500) _proxyPaths.clear();
   const server = await getPlayerServer();
@@ -905,4 +1006,7 @@ module.exports = {
   pickBest,
   buildHianimePlayerUrl,
   upstreamFetch,
+  isProxyAllowed,
+  allowProxyHosts,
+  PROXY_ALLOWED_SUFFIXES,
 };
