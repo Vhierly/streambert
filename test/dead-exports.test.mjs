@@ -155,13 +155,15 @@ const ALLOW = {
   loadAddons: "addon loader, called from getAddonGallery",
 };
 
-// The measured baseline. These 39 are real dead code today; each one is work
-// item t3–t8 in the v2.9.0 push, or is slated for deletion. Shrinks as they
-// land. Count is enforced.
+// The measured baseline. Each entry is work item t4–t8 in the v2.9.0 push, or
+// is slated for deletion. Shrinks as they land. Count is enforced.
+//
+// t3 (watch party) is done and no longer listed: WebRTC transport, the playback
+// bridge and the host-clock sync all landed, and watchPartyUpdateState,
+// watchPartyGetState and watchPartyShouldResync are called from the modal.
 const KNOWN_DEAD = {
-  // t3 — watch party gains real transport
-  "watchPartyUpdateState": 1,
-  "watchPartyHandleHostState": 1,
+  // t3 — watch party: DONE. WebRTC transport + playback bridge wired, and
+  // watchPartyUpdateState is called by the modal. Nothing left here.
   // t4 — trakt scrobble
   "traktGetClientId": 1,
   "traktSetClientId": 1,
@@ -240,6 +242,31 @@ const staleAllow = Object.keys(ALLOW).filter((n) => !liveNames.has(n));
 if (staleAllow.length) {
   problems.push(`stale allowlist — these exports no longer exist: ${staleAllow.join(", ")}`);
 }
+
+// A missing-import scan was tried here and removed.
+//
+// It is the natural mirror of the dead-export check, and it did catch a real
+// one: `getLastPlaybackProgress is not defined` reached a build and only fired
+// at runtime, because vite treats an unimported identifier as a global and
+// compiles it clean (see scripts/smoke.mjs for why the smoke test is what
+// catches that class).
+//
+// It could not be made trustworthy without a real parser. Text matching cannot
+// separate three cases that all look identical in a flat scan:
+//
+//   ageRating.js    export function getAgeLimitSetting(storage)   ← parameter
+//   sourceHealth.js // the failover cache (storage.getFailoverSource…)  ← comment
+//   gamepad.js      //  - useGamepadNav.js → app-wide D-pad nav     ← comment
+//
+// Every one of those was reported as a missing import. Stripping comments and
+// tracking function scope would fix those specific cases but not the general
+// problem (shadowed names, hoisted declarations, destructured aliases), and a
+// check that fires on correct code trains everyone to ignore it — worse than no
+// check at all.
+//
+// The coverage stays where it can be honest: scripts/smoke.mjs mounts the real
+// app and fails on the runtime ReferenceError, and test/playback-bridge.test.mjs
+// asserts the specific import sites that ship together.
 
 if (problems.length) {
   console.error(`FAIL — dead-exports:\n\n${problems.map((p) => `  ${p}`).join("\n")}\n`);

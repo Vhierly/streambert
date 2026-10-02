@@ -23,6 +23,11 @@
 
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import Hls from "hls.js";
+import {
+  publishPlaybackProgress,
+  onPlaybackCommand,
+} from "../utils/playbackBridge";
+import { watchPartyHostSeek } from "../utils/watchParty";
 
 /**
  * Turn a raw upstream URL into a same-origin proxied one.
@@ -267,6 +272,58 @@ export default function NativePlayer({
     const id = setInterval(tick, 5000);
     return () => clearInterval(id);
   }, [onProgress]);
+
+  // Publish our clock so the watch party can follow along. Publishing from the
+  // element itself rather than from a shared context means the embed path and
+  // the native path look identical to whatever is listening.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const push = () =>
+      publishPlaybackProgress({
+        currentTime: v.currentTime,
+        duration: v.duration || 0,
+        isPlaying: !v.paused,
+      });
+    const onSeeked = () => {
+      push();
+      // Only the host reaches here: watchPartyHostSeek returns false for a
+      // guest, so a guest correcting its own drift cannot loop back to the host.
+      watchPartyHostSeek(v.currentTime, !v.paused);
+    };
+    v.addEventListener("timeupdate", push);
+    v.addEventListener("play", push);
+    v.addEventListener("pause", push);
+    v.addEventListener("seeked", onSeeked);
+    push();
+    return () => {
+      v.removeEventListener("timeupdate", push);
+      v.removeEventListener("play", push);
+      v.removeEventListener("pause", push);
+      v.removeEventListener("seeked", onSeeked);
+    };
+  }, [effectiveSrc]);
+
+  // Obey the watch party. A guest does not control the play/pause button — the
+  // host does — so these arrive as commands rather than as a seek the user
+  // typed. Same tolerance as everyone else: only correct real drift.
+  useEffect(() => {
+    return onPlaybackCommand((cmd) => {
+      const v = videoRef.current;
+      if (!v || !cmd) return;
+      if (cmd.type === "seek" && isFinite(cmd.currentTime)) {
+        try {
+          v.currentTime = cmd.currentTime;
+        } catch {}
+      } else if (cmd.type === "play") {
+        v.play().catch(() => {});
+      } else if (cmd.type === "pause") {
+        try {
+          v.pause();
+        } catch {}
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const v = videoRef.current;
