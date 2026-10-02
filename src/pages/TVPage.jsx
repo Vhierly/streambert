@@ -456,9 +456,6 @@ export default function TVPage({
   const [nativeEnabled, setNativeEnabled] = useState(
     () => storage.get(STORAGE_KEYS.NATIVE_PLAYER) !== false,
   );
-  // A native stream only exists for HiAnime; embeds and every other source
-  // always play through the webview.
-  const nativeActive = !!(nativeStream?.src && nativeEnabled && !pipOpen);
   const [resolvingUrl, setResolvingUrl] = useState(false);
   const [resolveError, setResolveError] = useState(null);
   // Refs mirror the above so the resolve-effect can guard without stale closures
@@ -473,6 +470,13 @@ export default function TVPage({
   const [webviewLoading, setWebviewLoading] = useState(false);
   const [playerFullscreen, setPlayerFullscreen] = useState(false);
   const [pipOpen, setPipOpen] = useState(false);
+  // A native stream only exists for HiAnime; embeds and every other source
+  // always play through the webview.
+  //
+  // Declared here, not next to nativeStream: it reads pipOpen, and useSourceRecovery
+  // below needs it. Order is load-bearing — reading pipOpen before its useState
+  // runs throws "Cannot access 'X' before initialization" on every render.
+  const nativeActive = !!(nativeStream?.src && nativeEnabled && !pipOpen);
   const pipUrlRef = useRef(null);
   const pipWebContentsIdRef = useRef(null); // cached WebContents ID of the pop-out window
   const [menuPos, setMenuPos] = useState(null);
