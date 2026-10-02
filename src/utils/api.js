@@ -1,3 +1,9 @@
+// The addon registry is the one import in this file. It is deliberately a
+// narrow, side-effect-free lookup rather than the whole registry: addons.js
+// reaches back into this module (resolveWithAddon), so importing it broadly
+// would create a cycle, and addons.js runs loadAddons() on load.
+import { getAddonSource, getAddonSources } from "./addons";
+
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const IMG_BASE = "https://image.tmdb.org/t/p";
 
@@ -269,23 +275,60 @@ export const getSourceUrl = (
   accentColor = null,
   subtitleLang = null,
 ) => {
+  // Addon sources are peers of the built-in ones, not a separate system: an
+  // installed addon declares the same movieUrl/tvUrl shape, so the whole
+  // downstream path — params, accent colour, subtitle language, health checks —
+  // applies to it unchanged.
+  //
+  // Before this, addons were invisible here, so PLAYER_SOURCES.find returned
+  // undefined and the `?? PLAYER_SOURCES[0]` fallback silently swapped the
+  // requested source for the first built-in. Installing VidCloud and pressing
+  // play gave you whatever source happened to be first in the list.
+  const addon = getAddonSource(sourceId);
   const src =
-    PLAYER_SOURCES.find((s) => s.id === sourceId) ?? PLAYER_SOURCES[0];
-  const baseUrl =
-    type === "movie" ? src.movieUrl(id) : src.tvUrl(id, season, ep);
+    addon ??
+    PLAYER_SOURCES.find((s) => s.id === sourceId) ??
+    PLAYER_SOURCES[0];
+
+  const manifest = addon ? addon.manifest : src;
+  const builder = type === "movie" ? manifest.movieUrl : manifest.tvUrl;
+
+  // An addon that only declares one of the two is not broken, it just does not
+  // serve that content type. Falling back to a built-in source that does keeps
+  // the caller on its feet: every call site here feeds the result straight into
+  // a webview src or an iframe, so returning null would put the literal string
+  // "null" in a src attribute and produce a blank player with no explanation.
+  // A wrong-but-working source is recoverable from the source menu; a blank
+  // frame with no error is not.
+  const usable =
+    typeof builder === "function"
+      ? { manifest, build: builder }
+      : {
+          manifest: PLAYER_SOURCES[0],
+          build:
+            type === "movie"
+              ? PLAYER_SOURCES[0].movieUrl
+              : PLAYER_SOURCES[0].tvUrl,
+        };
+
+  const baseUrl = usable.build(id, season, ep);
   const url = new URL(baseUrl);
 
-  Object.entries(src.params || {}).forEach(([key, value]) => {
+  // Params come from the resolved manifest, not from `src`. Reading them off
+  // `src` meant an addon declared its autoplay/lang params in the manifest and
+  // they were silently dropped, because `src` was still a built-in source (or
+  // the addon object itself, which has no params field).
+  Object.entries(usable.manifest.params || {}).forEach(([key, value]) => {
     url.searchParams.set(key, value);
   });
 
   // Inject accent color into the player if the source supports it
-  if (accentColor && src.colorParam) {
-    url.searchParams.set(src.colorParam, accentColor.replace(/^#/, ""));
+  if (accentColor && usable.manifest.colorParam) {
+    url.searchParams.set(usable.manifest.colorParam, accentColor.replace(/^#/, ""));
   }
 
-  if (subtitleLang && src.langParam) {
-    url.searchParams.set(src.langParam, subtitleLang);
+  if (subtitleLang && usable.manifest.langParam) {
+    url.searchParams.set(usable.manifest.langParam, subtitleLang);
   }
 
   Object.entries(extraParams).forEach(([key, value]) => {
@@ -349,32 +392,20 @@ export const NEEDS_INTERCEPT = ["vidsrc", "vidlink", "vidspark", "vidfast", "vid
 
 /**
  * Get all available sources — built-in PLAYER_SOURCES + installed community addons.
- * Reads installed addons from localStorage for synchronous access.
+ *
+ * The addon entries come from addons.js, not from localStorage. An addon's
+ * movieUrl/tvUrl are functions, and JSON.stringify drops them, so reading the
+ * persisted list and reaching for `a.movieUrl` always came back undefined — the
+ * fallback then built `https://<addon-id>`, which is the addon's homepage, not
+ * a playable URL. The source menu therefore offered addons that could only ever
+ * load a blank page. The persisted copy is still the record of what is
+ * installed; the live registry is where the behaviour lives.
  */
 export function getAllSources() {
   try {
-    // Read installed community addons from localStorage (set by addons.js)
-    const raw = localStorage.getItem("streambert_installedAddons");
-    const installedAddons = raw ? JSON.parse(raw) : [];
-    const communitySources = installedAddons
-      .filter((a) => a.status === "active")
-      .map((a) => ({
-        id: a.id,
-        label: a.name,
-        tag: a.tag || null,
-        note: a.note || null,
-        supportsProgress: a.supportsProgress ?? true,
-        colorParam: a.colorParam || null,
-        langParam: a.langParam || null,
-        params: a.params || {},
-        movieUrl: a.movieUrl || ((_id) => `https://${a.id}`),
-        tvUrl: a.tvUrl || ((_id, _s, _e) => `https://${a.id}`),
-        async: a.async ?? false,
-        progressViaFrames: a.progressViaFrames ?? false,
-        isCommunity: true,
-      }));
-    return [...PLAYER_SOURCES, ...communitySources];
+    return [...PLAYER_SOURCES, ...getAddonSources()];
   } catch {
+    // A malformed addon must not take the built-in sources down with it.
     return PLAYER_SOURCES;
   }
 }

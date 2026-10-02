@@ -12,7 +12,11 @@ import {
   applyEpisodeMapping,
   buildEpisodeGroupMap,
 } from "../utils/episodeMappings";
-import { traktSetNowPlaying, traktClearNowPlaying } from "../utils/traktScrobbler";
+import {
+  traktSetNowPlaying,
+  traktClearNowPlaying,
+  traktScrobblerDispose,
+} from "../utils/traktScrobbler";
 import {
   tmdbFetch,
   imgUrl,
@@ -407,6 +411,17 @@ export default function TVPage({
   const [interceptedSubs, setInterceptedSubs] = useState([]);
   // All available sources (built-in + installed community addons)
   const [allSources, setAllSources] = useState(() => getAllSources());
+
+  // Re-read the registry when an addon is installed, removed or toggled. The
+  // state above is a snapshot taken at mount, so without this an addon added
+  // from Settings did not appear in the source menu until the app restarted —
+  // installed, listed, and not selectable.
+  useEffect(() => {
+    const onAddonsChanged = () => setAllSources(getAllSources());
+    window.addEventListener("streambert:addons-changed", onAddonsChanged);
+    return () =>
+      window.removeEventListener("streambert:addons-changed", onAddonsChanged);
+  }, []);
   const [playerSource, setPlayerSource] = useState(() => {
     const saved = storage.get("playerSource");
     // A remembered source can stop existing: an anime source that was removed,
@@ -1428,10 +1443,12 @@ export default function TVPage({
     announcePlayerState(playing);
     return () => {
       announcePlayerState(false);
-      // Leaving the page closes whatever Trakt still thinks is playing. Without
-      // this, backing out of a detail page leaves the scrobble open and the
-      // episode is never recorded as watched or stopped.
+      // Leaving the page closes whatever Trakt still thinks is playing, and
+      // detaches the scrobbler's progress listener. Without the dispose the
+      // subscription survives the unmount and each visit to a detail page adds
+      // another one, all of them reacting to the next thing that plays.
       traktClearNowPlaying();
+      traktScrobblerDispose();
     };
   }, [playing]);
 

@@ -43,9 +43,13 @@ function collect(dir, acc = []) {
   return acc;
 }
 
+// test/ is deliberately absent. A test calling an export does not make it
+// reachable: including it hid three addon functions that nothing in the app
+// calls, which is precisely the question this scan exists to answer. The suites
+// import the real modules and exercise real behaviour, so they lose nothing by
+// not being part of the corpus.
 const sources = [
   ...collect(join(root, "src")),
-  ...collect(join(root, "test")),
   ...collect(join(root, "scripts")),
   join(root, "index.js"),
   join(root, "preload.js"),
@@ -176,11 +180,14 @@ const KNOWN_DEAD = {
   "traktGetCalendar": 1,
   "traktGetTrending": 1,
   "traktGetPopular": 1,
-  // t5 — addon registry becomes the source resolver
+  // t5 — addons: resolveWithAddon and getAddonSources DONE (backed by
+  // getAddonSource, and reachable from the source menu via getAllSources).
+  // These three remain: only test/addons.test.mjs calls them, no page does.
+  // A test calling an export does not make a feature reachable, and the ratchet
+  // is only worth having if it keeps saying so.
   "getAddon": 1,
   "isAddonLoaded": 1,
   "unregisterAddon": 1,
-  "resolveWithAddon": 1,
   // t6 — smart downloads gets a scheduler
   "isWithinSchedule": 1,
   "shouldAutoDownload": 1,

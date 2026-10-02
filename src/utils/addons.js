@@ -187,6 +187,30 @@ export async function loadAddons() {
 }
 
 // ── Addon Management ─────────────────────────────────────────────────────────
+/**
+ * Tell open pages the source list changed.
+ *
+ * The pages snapshot getAllSources() into state on mount, so an addon installed
+ * from Settings was not pickable until the app was restarted. Same event
+ * convention as the rest of the app (see playbackBridge / TVPage settings).
+ */
+function announceRegistryChange() {
+  try {
+    // getAddonSources(), not getAllSources(): that one lives in api.js, which
+    // imports this module — reaching for it here threw a ReferenceError that the
+    // catch below swallowed, so the event was never dispatched and the pages
+    // never heard about a change. An empty catch hid the entire feature.
+    window.dispatchEvent(
+      new CustomEvent("streambert:addons-changed", {
+        detail: getAddonSources(),
+      }),
+    );
+  } catch {
+    // Only a genuinely absent window (tests, a non-renderer context) is fine to
+    // ignore here.
+  }
+}
+
 export function registerAddon(manifest) {
   if (!manifest.id || !manifest.name) {
     throw new Error("Addon must have id and name");
@@ -202,6 +226,7 @@ export function registerAddon(manifest) {
   const installed = loadInstalledAddons().filter((a) => a.id !== manifest.id);
   installed.push(addon);
   saveInstalledAddons(installed);
+  announceRegistryChange();
 }
 
 export function unregisterAddon(id) {
@@ -212,6 +237,7 @@ export function unregisterAddon(id) {
   // Remove from localStorage
   const installed = loadInstalledAddons().filter((a) => a.id !== id);
   saveInstalledAddons(installed);
+  announceRegistryChange();
   return true;
 }
 
@@ -225,6 +251,8 @@ export function toggleAddon(id, enabled) {
   const installed = loadInstalledAddons().filter((a) => a.id !== id);
   if (enabled) installed.push(addon);
   saveInstalledAddons(installed);
+  // A disabled addon must leave the source menu too, not just stop working.
+  announceRegistryChange();
   return addon;
 }
 
@@ -243,14 +271,84 @@ export function getAddonGallery() {
 }
 
 // ── Resolve stream URL via addon ─────────────────────────────────────────────
+/**
+ * Look up an installed addon by the id the player uses as a source id.
+ *
+ * api.js imports this rather than the whole registry, and calls it with no
+ * arguments from getSourceUrl. That matters: resolveWithAddon used to delegate
+ * back into api.getSourceUrl, which looked the id up in PLAYER_SOURCES, failed
+ * to find it (addons are not in that list), and fell through to
+ * `?? PLAYER_SOURCES[0]`. So installing an addon and pressing play silently
+ * substituted a different source — the addon looked installed and worked, while
+ * playing something else entirely.
+ *
+ * Returns null rather than throwing for an unknown or disabled id: a missing
+ * source is an ordinary condition here, not an error worth crashing a click on.
+ */
+export function getAddonSource(sourceId) {
+  if (!sourceId) return null;
+  const addon = _addons.get(sourceId);
+  if (!addon) return null;
+  if (addon.status !== "active") return null;
+  // A manifest with no URL builders cannot resolve anything; treat it as absent
+  // so the caller falls back to a real source.
+  const { movieUrl, tvUrl } = addon.manifest || {};
+  if (typeof movieUrl !== "function" && typeof tvUrl !== "function") return null;
+  return addon;
+}
+
+/**
+ * Every active addon that declares a URL builder, shaped exactly like a
+ * PLAYER_SOURCES entry.
+ *
+ * This is what makes an installed addon selectable: the source menu renders
+ * whatever list it is given, and before this existed the only list was the
+ * hardcoded PLAYER_SOURCES, so an addon could be installed, listed in Settings
+ * and still be unreachable as a playback choice.
+ */
+export function getAddonSources() {
+  return [..._addons.values()]
+    .filter((a) => getAddonSource(a.id))
+    .map((a) => ({
+      id: a.id,
+      // `label`, not `name`: the source menu renders entry.label, and PLAYER_SOURCES
+      // entries carry that field. Emitting `name` here produced a menu full of
+      // "undefined" rows.
+      label: a.name,
+      name: a.name,
+      fromAddon: true,
+      movieUrl: a.manifest.movieUrl,
+      tvUrl: a.manifest.tvUrl,
+      params: a.manifest.params || {},
+      colorParam: a.manifest.colorParam ?? null,
+      langParam: a.manifest.langParam ?? null,
+      supportsProgress: a.manifest.supportsProgress ?? false,
+      searchUrl: a.manifest.searchUrl ?? null,
+    }));
+}
+
+/**
+ * Resolve a stream URL through an addon.
+ *
+ * Thin on purpose: api.getSourceUrl already understands addon ids (see
+ * getAddonSource), so this only validates and forwards. Delegating from here
+ * into that function is what produced the silent fallback described above.
+ */
 export async function resolveWithAddon(addonId, type, id, season, ep, params = {}) {
-  const addon = _addons.get(addonId);
-  if (!addon || addon.status !== "active") {
+  const addon = getAddonSource(addonId);
+  if (!addon) {
     throw new Error(`Addon ${addonId} not found or inactive`);
   }
-  
-  // Built-in addons use the existing PLAYER_SOURCES system
-  // Custom addons would call their main module's resolve function
+  // Checked here rather than after the call: api.getSourceUrl deliberately falls
+  // back to a working source when an addon cannot serve the requested type, so
+  // this explicit API has to be the one that refuses — handing back a different
+  // source to a caller that named this addon is the silent-substitution bug all
+  // over again, one layer up.
+  const builder =
+    type === "movie" ? addon.manifest.movieUrl : addon.manifest.tvUrl;
+  if (typeof builder !== "function") {
+    throw new Error(`Addon ${addonId} does not provide ${type} playback`);
+  }
   const { getSourceUrl } = await import("./api");
   return getSourceUrl(addonId, type, id, season, ep, params);
 }
