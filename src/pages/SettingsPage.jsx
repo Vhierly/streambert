@@ -1331,6 +1331,9 @@ function AppearanceSection() {
   const [accentInPlayer, setAccentInPlayer] = useState(
     () => storage.get(STORAGE_KEYS.ACCENT_IN_PLAYER) !== false,
   );
+  const [nativePlayer, setNativePlayer] = useState(
+    () => storage.get(STORAGE_KEYS.NATIVE_PLAYER) !== false,
+  );
   const [theme, setTheme] = useState(
     () => storage.get(STORAGE_KEYS.THEME) || "dark",
   );
@@ -1386,6 +1389,7 @@ function AppearanceSection() {
     storage.set(STORAGE_KEYS.REDUCE_ANIMATIONS, noAnim ? 1 : 0);
     storage.set(STORAGE_KEYS.GAMEPAD_ENABLED, gamepadEnabled);
     window.dispatchEvent(new CustomEvent("streambert:gamepad-settings-changed"));
+    storage.set(STORAGE_KEYS.NATIVE_PLAYER, nativePlayer);
     storage.set(STORAGE_KEYS.THEME, theme);
     if (theme === "custom") {
       storage.set(STORAGE_KEYS.CUSTOM_THEME_VARS, customVars);
@@ -1719,6 +1723,21 @@ function AppearanceSection() {
             </div>
             <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
               Disables transitions and hover effects throughout the app.
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Toggle value={nativePlayer} onChange={setNativePlayer} />
+          <div>
+            <div
+              style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}
+            >
+              Native anime player
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
+              Plays HiAnime streams in Streambert's own player, so the controls
+              are consistent with the rest of the app and subtitles come from the
+              stream. Turn off to fall back to the source's own player.
             </div>
           </div>
         </div>

@@ -946,6 +946,61 @@ async function buildHianimePlayerUrl({
   return `http://127.0.0.1:${port}/player?src=${encodeURIComponent(proxied)}&t=${startTime || 0}`;
 }
 
+/**
+ * Build the proxied stream descriptors the renderer needs to drive its own
+ * <video> element (the native player) instead of loading our /player page into
+ * a webview.
+ *
+ * Same Referer + SSRF-allowlist setup as buildHianimePlayerUrl — the only
+ * difference is the shape of the answer. That one returns a page URL for a
+ * webview; this returns absolute loopback URLs for hls.js, so the video element,
+ * its <track> elements and the control bar all live in the app's own document
+ * where we can style and bind them directly.
+ */
+async function buildHianimeNativeStream({
+  url,
+  referer,
+  subtitles,
+  masterUrl = null,
+  qualities = null,
+}) {
+  _proxyReferer = referer || "https://zokoanime.video/";
+  _proxySubs = Array.isArray(subtitles) ? subtitles : [];
+  allowProxyHosts([url, masterUrl, ...(Array.isArray(subtitles) ? subtitles : [])]);
+  if (_proxyPaths.size > 500) _proxyPaths.clear();
+
+  const server = await getPlayerServer();
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  // Same master-playlist preference as the webview player: when the resolver
+  // found a ladder, hand hls.js the master so it parses the levels itself and
+  // quality switching doesn't tear down the stream.
+  const list = Array.isArray(qualities) ? qualities : null;
+  const useMaster = !!(masterUrl && list && list.length > 1);
+  const streamUrl = useMaster ? masterUrl : url;
+
+  // Subtitle VTT also goes through the proxy — the CDN rejects it without the
+  // embed Referer, exactly like the playlist.
+  const tracks = _proxySubs
+    .filter((s) => (typeof s === "string" ? s : s?.src))
+    .map((s, i) => {
+      const o = typeof s === "string" ? { src: s } : s;
+      return {
+        src: base + proxyPathFor(o.src),
+        lang: o.lang || "",
+        label: o.label || (i === 0 ? "Subtitle" : "Subtitle " + (i + 1)),
+        default: i === 0,
+      };
+    });
+
+  return {
+    proxyBase: base,
+    src: base + proxyPathFor(streamUrl),
+    masterSrc: useMaster ? base + proxyPathFor(masterUrl) : null,
+    subtitles: tracks,
+  };
+}
+
 // ── IPC registration ─────────────────────────────────────────────────────────
 
 function register() {
@@ -990,6 +1045,25 @@ function register() {
       return { ok: false, error: e.message };
     }
   });
+
+  // Same stream, but handed back as loopback URLs instead of a page, so the
+  // renderer can mount NativePlayer and own the <video> element itself.
+  ipcMain.handle("hianime-native-stream", async (_, args) => {
+    try {
+      const { url, referer, subtitles, masterUrl, qualities } = args || {};
+      if (!url) return { ok: false, error: "No url provided" };
+      const stream = await buildHianimeNativeStream({
+        url,
+        referer,
+        subtitles,
+        masterUrl,
+        qualities,
+      });
+      return { ok: true, ...stream, rawUrl: url };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
 }
 
 module.exports = {
@@ -1005,6 +1079,7 @@ module.exports = {
   norm,
   pickBest,
   buildHianimePlayerUrl,
+  buildHianimeNativeStream,
   upstreamFetch,
   isProxyAllowed,
   allowProxyHosts,

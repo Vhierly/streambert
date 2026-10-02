@@ -54,8 +54,20 @@ export default function NativePlayer({
   onDuration,
   onPlayingChange,
   onReady,
+  onVideoElement,
 }) {
-  const videoRef = useRef(null);
+  const localVideoRef = useRef(null);
+  // Hand the element up to NativeStage. It has to be state there, not a ref:
+  // the element does not exist until this component mounts, and an effect keyed
+  // on a ref object never re-runs when the ref fills in.
+  const setVideoRef = useCallback(
+    (node) => {
+      localVideoRef.current = node;
+      onVideoElement?.(node);
+    },
+    [onVideoElement],
+  );
+  const videoRef = localVideoRef;
   const hlsRef = useRef(null);
   const [levels, setLevels] = useState([]);
   const [level, setLevel] = useState(-1); // -1 = auto
@@ -105,7 +117,6 @@ export default function NativePlayer({
 
     const onLoaded = () => {
       setStatus("ready");
-      onReady?.();
       // Resume where the user left off, but only forward — re-seeking backwards
       // fights the source's own "continue watching" behaviour.
       if (startTime > 1 && video.currentTime < 1) {
@@ -113,6 +124,11 @@ export default function NativePlayer({
           video.currentTime = startTime;
         } catch {}
       }
+      // Autoplay has to be requested from inside the load event: Chromium
+      // rejects play() issued during page load, and hls.js only reaches
+      // MANIFEST_PARSED once the playlist has been fetched.
+      video.play().catch(() => {});
+      onReady?.();
     };
 
     // Safari / iOS: native HLS, no library needed.
@@ -269,7 +285,7 @@ export default function NativePlayer({
   return (
     <div className="native-player">
       <video
-        ref={videoRef}
+        ref={setVideoRef}
         className="native-player__video"
         poster={poster || undefined}
         playsInline
@@ -280,7 +296,10 @@ export default function NativePlayer({
       />
 
       {/* Native <track> elements so the browser renders subtitles itself —
-          this is what lets our ::cue styling apply. */}
+          this is what lets our ::cue styling apply. crossOrigin is required:
+          the track comes off the loopback proxy, which is a different origin
+          than the app document, and a cross-origin <track> without it is
+          silently dropped. */}
       {subtitleTracks.map((t) => (
         <track
           key={t.index}
@@ -289,6 +308,7 @@ export default function NativePlayer({
           srcLang={t.lang || "en"}
           label={t.label}
           default={t.default}
+          crossOrigin="anonymous"
         />
       ))}
 

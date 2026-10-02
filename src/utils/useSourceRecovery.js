@@ -35,6 +35,10 @@ export function useSourceRecovery({
   onHop,
   onGiveUp,
   resetKey,
+  // Set when the webview is deliberately parked on about:blank because another
+  // player owns the screen. Every probe below inspects the webview, so leaving
+  // them running would read the blank page as "this source is dead".
+  suspended = false,
 }) {
   const [health, setHealth] = useState({});
   const [recovering, setRecovering] = useState(false);
@@ -102,7 +106,7 @@ export function useSourceRecovery({
 
   // ── Wire webview events ────────────────────────────────────────────────────
   useEffect(() => {
-    if (!playing) return;
+    if (!playing || suspended) return;
     const wv = webviewRef?.current;
     if (!wv) return;
     attemptRef.current += 1;
@@ -158,7 +162,7 @@ export function useSourceRecovery({
       wv.removeEventListener("did-fail-load", onFailLoad);
       wv.removeEventListener("did-finish-load", onFinishLoad);
     };
-  }, [playing, sourceId, failAndHop, markAlive, webviewRef]);
+  }, [playing, sourceId, failAndHop, markAlive, webviewRef, suspended]);
 
   // Clean up the grace timer on unmount so a late timer can't fire a hop
   // against a page that's gone.

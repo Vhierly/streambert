@@ -78,6 +78,7 @@ import { initSourceHealth, refreshSourceHealth, rankSources } from "../utils/sou
 import { useSourceRecovery } from "../utils/useSourceRecovery";
 import { announcePlayerState } from "../utils/downloadQueue";
 import PlayerControlBar from "../components/PlayerControlBar";
+import NativeStage from "../components/NativeStage";
 import MiniPlayerBar from "../components/MiniPlayerBar";
 
 // ── Partial-circle progress icon (cached per pct tier) ───────────────────────
@@ -442,6 +443,22 @@ export default function TVPage({
   );
   // async URL resolution
   const [resolvedPlayerUrl, setResolvedPlayerUrl] = useState(null);
+  // The same HiAnime stream addressed as loopback URLs rather than a page, so
+  // our own <video> can play it. Null when the resolver only produced an embed
+  // page, or when the native path is disabled/unavailable.
+  const [nativeStream, setNativeStream] = useState(null);
+  // Declared up here rather than next to the resolver because the source-recovery
+  // hook below needs to know whether the webview is the live player.
+  //
+  // The setting is the user's kill switch — native playback is strictly better
+  // when it works, but "my player is different now" is a valid complaint and it
+  // has to be one click to fix, without a source switch.
+  const [nativeEnabled, setNativeEnabled] = useState(
+    () => storage.get(STORAGE_KEYS.NATIVE_PLAYER) !== false,
+  );
+  // A native stream only exists for HiAnime; embeds and every other source
+  // always play through the webview.
+  const nativeActive = !!(nativeStream?.src && nativeEnabled && !pipOpen);
   const [resolvingUrl, setResolvingUrl] = useState(false);
   const [resolveError, setResolveError] = useState(null);
   // Refs mirror the above so the resolve-effect can guard without stale closures
@@ -468,6 +485,10 @@ export default function TVPage({
   const sourceRef = useRef(null);
   const playerWrapRef = useRef(null);
   const webviewRef = useRef(null);
+  // The native player's <video>, when NativeStage is the live player. The
+  // progress/skip machinery below reads position from whichever of the two is
+  // actually playing, so watch progress keeps saving on the native path.
+  const nativeVideoRef = useRef(null);
   // Always-current refs for interval callbacks, avoids stale closures without restarting the interval
   const saveProgressRef = useRef(saveProgress);
   saveProgressRef.current = saveProgress;
@@ -491,6 +512,7 @@ export default function TVPage({
   const [sourceNotice, setSourceNotice] = useState(null);
   const handleHop = useCallback((next) => {
     setM3u8Url(null);
+    setNativeStream(null);
     setInterceptedSubs([]);
     resolvedPlayerUrlRef.current = null;
     setResolvedPlayerUrl(null);
@@ -514,6 +536,11 @@ export default function TVPage({
     webviewRef,
     isAnime,
     manualSelectionRef: userManualSelectionRef,
+    // Under native playback the webview sits on about:blank by design. Left
+    // running, the "did this page expose a <video>?" probe would fire after its
+    // grace period, find nothing, and fail over to a different source in the
+    // middle of a stream that is playing perfectly well.
+    suspended: nativeActive,
     onHop: (next, reason) => {
       handleHop(next);
       setSourceNotice(
@@ -710,6 +737,7 @@ export default function TVPage({
   // Reset m3u8 URL, subtitle URL and source menu whenever the series, episode, or source changes
   useEffect(() => {
     setM3u8Url(null);
+    setNativeStream(null);
     setInterceptedSubs([]);
     setShowSourceMenu(false);
     resolvedPlayerUrlRef.current = null;
@@ -790,6 +818,7 @@ export default function TVPage({
         // Only use cached fallback if it's also an anime source
         if (cachedSrc?.tag === "ANIME") {
           setM3u8Url(null);
+          setNativeStream(null);
           setInterceptedSubs([]);
           resolvedPlayerUrlRef.current = null;
           setResolvedPlayerUrl(null);
@@ -891,12 +920,19 @@ export default function TVPage({
             resolvedPlayerUrlRef.current = res.url;
             setResolvedPlayerUrl(res.url);
             setM3u8Url(null);
+            setNativeStream(null);
             if (res.warning) console.warn("[hianime]", res.warning);
             return;
           }
           // HiAnime's CDN rejects requests without the embed Referer, and the
           // renderer cannot set that header — so use the loopback proxy player
           // that attaches it in the main process.
+          //
+          // Two shapes come back from the proxy: the /player page (loaded in the
+          // webview, used when the pop-out window takes over) and the bare
+          // loopback URLs our own <video> plays from. Ask for both — the native
+          // player is the primary path, and the page URL is what PiP and the
+          // progress poller need.
           window.electron
             .hianimePlayerUrl({
               url: res.url,
@@ -920,6 +956,24 @@ export default function TVPage({
             .catch((e) => {
               if (mounted) setResolveError(e.message || "Failed to start local player");
             });
+
+          // Same stream, addressed as URLs instead of a page. Failure here is
+          // not fatal — the webview player above is still a valid path — so we
+          // just leave nativeStream null and let the webview render.
+          window.electron
+            .hianimeNativeStream?.({
+              url: res.url,
+              masterUrl: res.masterUrl,
+              qualities: res.qualities,
+              referer: res.referer,
+              subtitles: res.subtitles,
+            })
+            .then((n) => {
+              if (!mounted) return;
+              if (n?.ok && n.src) setNativeStream(n);
+              else console.warn("[hianime] native stream unavailable", n?.error);
+            })
+            .catch((e) => console.warn("[hianime] native stream failed", e));
         } else {
           // HiAnime is the only anime source, so there is nothing to fail over
           // to — surface the resolver's own error, which carries the real
@@ -944,6 +998,88 @@ export default function TVPage({
       cfTimers.forEach(clearTimeout);
     };
   }, [playing, selectedEp, playerSource, selectedSeason, dubMode]);
+
+  useEffect(() => {
+    const handler = () =>
+      setNativeEnabled(storage.get(STORAGE_KEYS.NATIVE_PLAYER) !== false);
+    window.addEventListener("streambert:player-settings-changed", handler);
+    return () =>
+      window.removeEventListener("streambert:player-settings-changed", handler);
+  }, []);
+
+  // Stamp user seeks on the native <video>. readPosition() reads these back to
+  // tell "the user moved the playhead" apart from "the source reset to 0",
+  // which is what decides whether we seek back after a quality switch.
+  useEffect(() => {
+    const el = nativeVideoRef.current;
+    if (!nativeActive || !el) return;
+    const onSeeked = () => {
+      el._sbSeekedAt = Date.now();
+      el._sbSeekedTo = el.currentTime;
+    };
+    el.addEventListener("seeked", onSeeked);
+    return () => el.removeEventListener("seeked", onSeeked);
+  }, [nativeActive, nativeStream?.src]);
+
+  // Seek whichever player is live. Used by AniSkip, the reset-detection
+  // recovery and the skip button, all of which used to talk to the webview only.
+  const seekTo = useCallback(async (time) => {
+    const el = nativeVideoRef.current;
+    if (el) {
+      try {
+        el.currentTime = time;
+      } catch {}
+      return;
+    }
+    const wv = webviewRef.current;
+    if (!wv) return;
+    try {
+      await wv.executeJavaScript(
+        `(() => { const v = document.querySelector('video'); if (v) v.currentTime = ${time}; })()`,
+      );
+    } catch {}
+  }, []);
+
+  // Read playback position from whichever player is live, in the same shape the
+  // progress/skip tick already consumes.
+  const readPosition = useCallback(async () => {
+    const el = nativeVideoRef.current;
+    if (el) {
+      if (!el.duration || el.duration === Infinity) return null;
+      return {
+        currentTime: el.currentTime,
+        duration: el.duration,
+        // The webview path derives this from a `seeked` listener it installs in
+        // the page; do the same here so resolution-reset detection and
+        // "user seeked" handling behave identically on both paths.
+        recentUserSeek: !!el._sbSeekedAt
+          ? Date.now() - el._sbSeekedAt < 6000
+          : false,
+        lastUserSeekTo: el._sbSeekedTo ?? null,
+      };
+    }
+    const wv = webviewRef.current;
+    if (!wv) return null;
+    return wv.executeJavaScript(`
+      (() => {
+        const v = document.querySelector('video')
+        if (!v || !v.duration || v.duration === Infinity || v.paused) return null
+        if (!v._seekTracked) {
+          v._seekTracked = true
+          v.addEventListener('seeked', () => {
+            v._lastUserSeek = Date.now()
+            v._lastUserSeekTo = v.currentTime
+          })
+        }
+        return {
+          currentTime: v.currentTime,
+          duration: v.duration,
+          recentUserSeek: v._lastUserSeek ? (Date.now() - v._lastUserSeek < 6000) : false,
+          lastUserSeekTo: v._lastUserSeekTo ?? null,
+        }
+      })()
+    `);
+  }, []);
 
   useEffect(() => {
     if (!window.electron) return;
@@ -1374,23 +1510,26 @@ export default function TVPage({
   // ── AniSkip: manual skip handler ─────────────────────────────────────────
   const handleManualSkip = useCallback(async () => {
     if (!skipPrompt || !skipTimings?.[skipPrompt]) return;
-    const rawEnd = skipTimings[skipPrompt].endTime;
-    const endTime = Number(rawEnd);
+    const endTime = Number(skipTimings[skipPrompt].endTime);
     if (!Number.isFinite(endTime)) return;
-    const wv = webviewRef.current;
-    if (!wv) return;
-    try {
-      await wv.executeJavaScript(
-        `(() => { const v = document.querySelector('video'); if (v) v.currentTime = ${endTime}; })()`,
-      );
-    } catch {}
+    await seekTo(endTime);
     setSkipPrompt(null);
-  }, [skipPrompt, skipTimings]);
+  }, [skipPrompt, skipTimings, seekTo]);
 
-  // Use webview before-input-event so Enter reaches main-ui before the webview
-  // handles it (avoids the webview's Space/Enter play-pause intercepting it).
+  // When the embed owns the screen, use webview before-input-event so Enter
+  // reaches main-ui before the webview handles it (it would otherwise swallow
+  // the key as a play/pause toggle). With native playback the <video> is in
+  // our own document, so a plain keydown listener is both sufficient and
+  // necessary — the webview is on about:blank and gets no input at all.
   useEffect(() => {
     if (!skipPrompt) return;
+    const onKey = (e) => {
+      if (e.key === "Enter") handleManualSkip();
+    };
+    if (nativeVideoRef.current) {
+      window.addEventListener("keydown", onKey);
+      return () => window.removeEventListener("keydown", onKey);
+    }
     const wv = webviewRef.current;
     if (!wv) return;
     const handler = (e) => {
@@ -1400,7 +1539,7 @@ export default function TVPage({
     };
     wv.addEventListener("before-input-event", handler);
     return () => wv.removeEventListener("before-input-event", handler);
-  }, [skipPrompt, handleManualSkip]);
+  }, [skipPrompt, handleManualSkip, nativeActive]);
 
   // Unified progress/skip timing tick for Allmanga and other sources.
   // Skip detection runs every tick, progress is saved every 5th tick (5s).
@@ -1419,12 +1558,18 @@ export default function TVPage({
       interval = setInterval(async () => {
         try {
           const wv = webviewRef.current;
-          if (!wv) return;
 
           let result;
-          // When the pop-out window is open the main webview shows about:blank
-          // -> query the pip window's webContents directly.
-          if (
+          // The native <video> is in our own document, so read it directly.
+          // Falling through to the webview here would report null forever —
+          // it sits on about:blank while native playback owns the screen.
+          if (nativeVideoRef.current) {
+            result = await readPosition();
+          } else if (!wv) {
+            return;
+            // When the pop-out window is open the main webview shows
+            // about:blank -> query the pip window's webContents directly.
+          } else if (
             pipWebContentsIdRef.current != null &&
             window.electron?.queryVideoProgress
           ) {
@@ -1436,26 +1581,7 @@ export default function TVPage({
               wv.getWebContentsId(),
             );
           } else {
-            result = await wv.executeJavaScript(`
-              (() => {
-                const v = document.querySelector('video')
-                if (!v || !v.duration || v.duration === Infinity || v.paused) return null
-                // Re-attach seek tracker if video element was recreated (e.g. quality change)
-                if (!v._seekTracked) {
-                  v._seekTracked = true
-                  v.addEventListener('seeked', () => {
-                    v._lastUserSeek = Date.now()
-                    v._lastUserSeekTo = v.currentTime
-                  })
-                }
-                return {
-                  currentTime: v.currentTime,
-                  duration: v.duration,
-                  recentUserSeek: v._lastUserSeek ? (Date.now() - v._lastUserSeek < 6000) : false,
-                  lastUserSeekTo: v._lastUserSeekTo ?? null,
-                }
-              })()
-            `);
+            result = await readPosition();
           }
 
           // ── AniSkip logic: runs every tick (only when aniSkipActive) ────
@@ -1472,13 +1598,7 @@ export default function TVPage({
             } else if (introSkipMode === "auto") {
               setSkipPrompt(null);
               const endTime = Number(skipTimings[activeSegment].endTime);
-              if (Number.isFinite(endTime)) {
-                try {
-                  await wv.executeJavaScript(
-                    `(() => { const v = document.querySelector('video'); if (v) v.currentTime = ${endTime}; })()`,
-                  );
-                } catch {}
-              }
+              if (Number.isFinite(endTime)) await seekTo(endTime);
             } else {
               setSkipPrompt(activeSegment);
             }
@@ -1505,16 +1625,11 @@ export default function TVPage({
             ) {
               if (now > seekBackCooldownRef.current) {
                 // First reset: seek back and start cooldown
-                const seekTo = lastKnownTimeRef.current;
+                // Named for what it restores, not for the helper it calls —
+                // the original shadowed it here.
+                const backTo = lastKnownTimeRef.current;
                 seekBackCooldownRef.current = now + 8000;
-                try {
-                  await wv.executeJavaScript(`
-                    (() => {
-                      const v = document.querySelector('video')
-                      if (v) v.currentTime = ${seekTo}
-                    })()
-                  `);
-                } catch {}
+                await seekTo(backTo);
               }
               // In both cases (first reset or cooldown): skip progress save with wrong position
               return;
@@ -1566,28 +1681,48 @@ export default function TVPage({
     skipTimings,
     playerSource,
     introSkipMode,
+    nativeActive,
     currentProgressKey,
     watchedThreshold,
     progressViaFrames,
+    readPosition,
+    seekTo,
   ]);
 
-  // Skip backward/forward by N seconds via webview JS injection
-  const seekBy = useCallback(async (seconds) => {
-    try {
+  // Skip backward/forward by N seconds. Reads the live player, so it works on
+  // both the native <video> and an embed.
+  const seekBy = useCallback(
+    async (seconds) => {
+      const el = nativeVideoRef.current;
+      if (el) {
+        try {
+          el.currentTime = Math.max(
+            0,
+            Math.min(el.duration || 0, el.currentTime + seconds),
+          );
+        } catch {}
+        return;
+      }
       const wv = webviewRef.current;
       if (!wv) return;
-      await wv.executeJavaScript(`
-        (() => {
-          const v = document.querySelector('video');
-          if (v) v.currentTime = Math.max(0, Math.min(v.duration || 0, v.currentTime + ${seconds}));
-        })()
-      `);
-    } catch {}
-  }, []);
+      try {
+        await wv.executeJavaScript(`
+          (() => {
+            const v = document.querySelector('video');
+            if (v) v.currentTime = Math.max(0, Math.min(v.duration || 0, v.currentTime + ${seconds}));
+          })()
+        `);
+      } catch {}
+    },
+    [],
+  );
 
   useEffect(() => {
     const wv = webviewRef.current;
-    if (!wv || !playing || !isAsync) return;
+    // Skip controls are injected into the embed's DOM. Native playback renders
+    // its own seek bar over the <video>, so injecting here would put a second,
+    // unreachable control bar inside a blank webview.
+    if (!wv || !playing || !isAsync || nativeActive) return;
 
     const inject = () => {
       wv.executeJavaScript(INJECT_SKIP_CONTROLS).catch(() => {});
@@ -1639,7 +1774,12 @@ export default function TVPage({
 
   useEffect(() => {
     const wv = webviewRef.current;
-    if (!wv || !playing || !gamepadEnabled) return;
+    // The guest script is injected into the embed and polled for its "leave the
+    // player" request. Under native playback the webview is on about:blank, so
+    // this would spin a 250ms executeJavaScript poll against an empty page for
+    // the whole session. NativeControls covers keyboard transport; gamepad
+    // transport is handled by its own key handling.
+    if (!wv || !playing || !gamepadEnabled || nativeActive) return;
 
     const inject = () => {
       wv.executeJavaScript(GAMEPAD_PLAYER_SCRIPT).catch(() => {});
@@ -1672,6 +1812,7 @@ export default function TVPage({
   const playEpisode = useCallback(
     (ep) => {
       setM3u8Url(null);
+      setNativeStream(null);
       setInterceptedSubs([]);
       resolvedPlayerUrlRef.current = null;
       setResolvedPlayerUrl(null);
@@ -2210,7 +2351,10 @@ export default function TVPage({
                 <webview
                   ref={webviewRef}
                   src={
-                    pipOpen
+                    // Native playback owns the screen, so the webview must not
+                    // load the same stream: two independent HLS sessions would
+                    // download every segment twice and fight over the decoder.
+                    nativeActive || pipOpen
                       ? "about:blank"
                       : isAsync
                         ? resolvedPlayerUrl || "about:blank"
@@ -2238,18 +2382,54 @@ export default function TVPage({
                     boxShadow: "none",
                     background: "black",
                     visibility:
-                      webviewLoading || (isAsync && !resolvedPlayerUrl)
+                      nativeActive ||
+                      webviewLoading ||
+                      (isAsync && !resolvedPlayerUrl)
                         ? "hidden"
                         : "visible",
                   }}
                   tabIndex={-1}
                 />
-                <PlayerControlBar
-                  playing={playing}
-                  webviewRef={webviewRef}
-                  pipIdRef={pipWebContentsIdRef}
-                  onNotice={setSourceNotice}
-                />
+                {/* Native playback: our own <video> plus its control bar. Mounted
+                    alongside the webview rather than in place of it — every
+                    non-HiAnime source still needs the webview, and the machinery
+                    above (progress polling, AniSkip, pop-out) targets it. */}
+                {nativeStream?.src && (
+                  <NativeStage
+                    playing={playing && nativeEnabled && !pipOpen}
+                    stream={nativeStream}
+                    startTime={
+                      storage.get("dlTime_" + (currentProgressKey || "")) || 0
+                    }
+                    poster={imgUrl(d.backdrop_path, "w1280")}
+                    title={title}
+                    videoRef={nativeVideoRef}
+                    onDuration={(d) => {
+                      durationRef.current = d;
+                    }}
+                    onEnded={() => triggerAutoplayRef.current?.()}
+                    onNotice={setSourceNotice}
+                    onError={(reason) => {
+                      // Don't strand the user: drop back to the webview player,
+                      // which is the path that was shipping before.
+                      console.warn("[native-player] falling back to embed", reason);
+                      setSourceNotice(
+                        "Native player failed — using the source's own player",
+                      );
+                      setNativeStream(null);
+                    }}
+                  />
+                )}
+                {/* The webview's own transport already has play/seek/volume, so
+                    PlayerControlBar would double up on top of it. */}
+                {!nativeActive && (
+                  <PlayerControlBar
+                    playing={playing}
+                    webviewRef={webviewRef}
+                    pipIdRef={pipWebContentsIdRef}
+                    onNotice={setSourceNotice}
+                  />
+                )}
                 <MiniPlayerBar
                   playing={playing && !pipOpen}
                   webviewRef={webviewRef}
@@ -2296,6 +2476,7 @@ export default function TVPage({
                         setDubMode(next);
                         storage.set(STORAGE_KEYS.ALLMANGA_DUB_MODE, next);
                         setM3u8Url(null);
+                        setNativeStream(null);
                         setInterceptedSubs([]);
                         resolvedPlayerUrlRef.current = null;
                         setResolvedPlayerUrl(null);
@@ -2393,6 +2574,7 @@ export default function TVPage({
                           // Lock: user manually selected a source, don't override with auto-switch
                           userManualSelectionRef.current = true;
                           setM3u8Url(null);
+                          setNativeStream(null);
                           setInterceptedSubs([]);
                           resolvedPlayerUrlRef.current = null;
                           setResolvedPlayerUrl(null);

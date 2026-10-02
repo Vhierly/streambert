@@ -32,7 +32,7 @@ const fmtTime = (s) => {
     : `${m}:${String(sec).padStart(2, "0")}`;
 };
 
-export default function NativeControls({ videoRef, title, onNotice }) {
+export default function NativeControls({ videoEl, title, onNotice }) {
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -52,11 +52,10 @@ export default function NativeControls({ videoRef, title, onNotice }) {
   const hideTimerRef = useRef(null);
   const [visible, setVisible] = useState(true);
 
-  const v = () => videoRef?.current;
 
   // ── Media element wiring ───────────────────────────────────────────────────
   useEffect(() => {
-    const el = v();
+    const el = videoEl;
     if (!el) return;
 
     const onPlay = () => setPlaying(true);
@@ -108,7 +107,7 @@ export default function NativeControls({ videoRef, title, onNotice }) {
       el.removeEventListener("volumechange", onVol);
       el.removeEventListener("ratechange", onRate);
     };
-  }, [videoRef]);
+  }, [videoEl]);
 
   // ── Auto-hide the bar so it doesn't sit over the picture ──────────────────
   const poke = useCallback(() => {
@@ -123,7 +122,7 @@ export default function NativeControls({ videoRef, title, onNotice }) {
 
   // ── Subtitle styling, applied to the real <video> ──────────────────────────
   useEffect(() => {
-    const el = v();
+    const el = videoEl;
     if (!el) return;
     let style = document.getElementById("__sb_native_cue");
     if (!style) {
@@ -142,7 +141,7 @@ export default function NativeControls({ videoRef, title, onNotice }) {
         ${s.backgroundOpacity > 0 ? `background: rgba(0,0,0,${s.backgroundOpacity}) !important;` : ""}
       }`;
     return () => {};
-  }, [subStyle, videoRef]);
+  }, [subStyle, videoEl]);
 
   const applyStyle = useCallback(
     (patch) => {
@@ -155,37 +154,37 @@ export default function NativeControls({ videoRef, title, onNotice }) {
 
   // ── Actions ────────────────────────────────────────────────────────────────
   const toggle = useCallback(() => {
-    const el = v();
+    const el = videoEl;
     if (!el) return;
     if (el.paused) el.play().catch(() => {});
     else el.pause();
-  }, [videoRef]);
+  }, [videoEl]);
 
   const seekBy = useCallback((d) => {
-    const el = v();
+    const el = videoEl;
     if (!el) return;
     try {
       el.currentTime = Math.max(0, Math.min(el.duration || 0, el.currentTime + d));
     } catch {}
-  }, [videoRef]);
+  }, [videoEl]);
 
   const pickSpeed = useCallback((r) => {
-    const el = v();
+    const el = videoEl;
     if (!el) return;
     el.playbackRate = r;
     setSpeed(r);
     onNotice?.(`${r}× speed`);
-  }, [videoRef, onNotice]);
+  }, [videoEl, onNotice]);
 
   const pickTrack = useCallback((i) => {
-    const el = v();
+    const el = videoEl;
     if (!el || !el.textTracks) return;
     Array.from(el.textTracks).forEach((t, k) => {
       t.mode = k === i ? "showing" : "disabled";
     });
     setActiveTrack(i);
     onNotice?.(i < 0 ? "Subtitles off" : `Subtitles: ${tracks[i]?.label ?? "on"}`);
-  }, [videoRef, tracks, onNotice]);
+  }, [videoEl, tracks, onNotice]);
 
   const armTimer = useCallback((minutes) => {
     const endAt = Date.now() + minutes * 60000;
@@ -197,7 +196,7 @@ export default function NativeControls({ videoRef, title, onNotice }) {
       const left = endAt - Date.now();
       if (left <= 0) {
         clearInterval(armTimer._iv);
-        const el = v();
+        const el = videoEl;
         if (el) {
           el.pause();
           el.volume = 1;
@@ -205,41 +204,41 @@ export default function NativeControls({ videoRef, title, onNotice }) {
         setTimerLeft(null);
       } else if (left < 6000) {
         // Fade over the last six seconds.
-        const el = v();
+        const el = videoEl;
         if (el) el.volume = Math.max(0, el.volume * 0.9);
       } else {
         setTimerLeft(Math.ceil(left / 1000));
       }
     }, 1000);
-  }, [videoRef, onNotice]);
+  }, [videoEl, onNotice]);
 
   useEffect(() => () => clearInterval(armTimer._iv), [armTimer]);
 
   // ── Keyboard ───────────────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e) => {
-      if (!v()) return;
+      if (!videoEl) return;
       const tag = (e.target?.tagName || "").toLowerCase();
       if (tag === "input" || tag === "textarea") return;
       switch (e.key) {
         case " ": case "k": e.preventDefault(); toggle(); break;
         case "ArrowLeft": e.preventDefault(); seekBy(-10); break;
         case "ArrowRight": e.preventDefault(); seekBy(10); break;
-        case "ArrowUp": e.preventDefault(); { const el = v(); if (el) el.volume = Math.min(1, el.volume + 0.1); } break;
-        case "ArrowDown": e.preventDefault(); { const el = v(); if (el) el.volume = Math.max(0, el.volume - 0.1); } break;
-        case "m": { const el = v(); if (el) el.muted = !el.muted; } break;
-        case "f": { const el = v(); if (el?.requestFullscreen) el.requestFullscreen(); } break;
+        case "ArrowUp": e.preventDefault(); { const el = videoEl; if (el) el.volume = Math.min(1, el.volume + 0.1); } break;
+        case "ArrowDown": e.preventDefault(); { const el = videoEl; if (el) el.volume = Math.max(0, el.volume - 0.1); } break;
+        case "m": { const el = videoEl; if (el) el.muted = !el.muted; } break;
+        case "f": { const el = videoEl; if (el?.requestFullscreen) el.requestFullscreen(); } break;
         case "c": setPanel((p) => (p === "subs" ? null : "subs")); break;
         default:
           if (e.key >= "0" && e.key <= "9" && e.key !== "0") {
-            const el = v();
+            const el = videoEl;
             if (el?.duration) { el.currentTime = (el.duration * Number(e.key)) / 10; }
           }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [videoRef, toggle, seekBy]);
+  }, [videoEl, toggle, seekBy]);
 
   const pct = duration > 0 ? (current / duration) * 100 : 0;
   const subSizeIdx = SIZE_STEPS.indexOf(subStyle.size);
@@ -254,7 +253,7 @@ export default function NativeControls({ videoRef, title, onNotice }) {
       <div
         className="native-ctl__seek"
         onClick={(e) => {
-          const el = v();
+          const el = videoEl;
           if (!el || !duration) return;
           const r = e.currentTarget.getBoundingClientRect();
           el.currentTime = ((e.clientX - r.left) / r.width) * duration;
@@ -277,7 +276,7 @@ export default function NativeControls({ videoRef, title, onNotice }) {
         <button
           className="native-ctl__btn"
           onClick={() => {
-            const el = v();
+            const el = videoEl;
             if (el) el.muted = !el.muted;
           }}
           title="Mute (M)"
@@ -292,7 +291,7 @@ export default function NativeControls({ videoRef, title, onNotice }) {
           step="0.05"
           value={muted ? 0 : volume}
           onChange={(e) => {
-            const el = v();
+            const el = videoEl;
             if (!el) return;
             el.volume = Number(e.target.value);
             el.muted = Number(e.target.value) === 0;
@@ -313,7 +312,7 @@ export default function NativeControls({ videoRef, title, onNotice }) {
         </button>
         <button
           className="native-ctl__btn"
-          onClick={() => { const el = v(); if (el?.requestFullscreen) el.requestFullscreen(); }}
+          onClick={() => { const el = videoEl; if (el?.requestFullscreen) el.requestFullscreen(); }}
           title="Fullscreen (F)"
         >
           ⛶

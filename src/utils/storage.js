@@ -80,6 +80,11 @@ export const STORAGE_KEYS = {
   // Intro skip (anime only, HiAnime source)
   // Values: "off" | "auto" | "manual"
   INTRO_SKIP_MODE: "introSkipMode",
+  // Own the <video> element for resolved HiAnime streams instead of handing the
+  // stream to a webview. Unset or true = native, false = the previous embed
+  // path. Defaulting to native is deliberate: it is the better experience, and
+  // this key is the one-click escape hatch if a stream misbehaves.
+  NATIVE_PLAYER: "nativePlayer",
   // Autoplay next preferences
   AUTOPLAY_NEXT_ENABLED: "autoplayNextEnabled",
   AUTOPLAY_NEXT_DURATION: "autoplayNextDuration",

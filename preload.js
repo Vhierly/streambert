@@ -65,6 +65,8 @@ contextBridge.exposeInMainWorld("electron", {
   searchHianime: (args) => ipcRenderer.invoke("search-hianime", args),
   hianimeEpisodes: (args) => ipcRenderer.invoke("hianime-episodes", args),
   hianimePlayerUrl: (args) => ipcRenderer.invoke("hianime-player-url", args),
+  hianimeNativeStream: (args) =>
+    ipcRenderer.invoke("hianime-native-stream", args),
 
   // App version (from package.json via Electron)
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
