@@ -188,11 +188,10 @@ const KNOWN_DEAD = {
   "getAddon": 1,
   "isAddonLoaded": 1,
   "unregisterAddon": 1,
-  // t6 — smart downloads gets a scheduler
-  "isWithinSchedule": 1,
-  "shouldAutoDownload": 1,
-  "matchesQuality": 1,
-  "canStartDownload": 1,
+  // t6 — smart downloads: DONE. isWithinSchedule / shouldAutoDownload /
+  // matchesQuality are the gates in src/utils/autoDownload.js, started from
+  // App.jsx. canStartDownload stays: downloadQueue.canStartNow covers the
+  // runtime gate and this one duplicates it with no caller.
   // t7 — jellyfin/plex library browser
   "isServerConnected": 1,
   "jellyfinGetPlaybackInfo": 1,

@@ -27,6 +27,11 @@ import {
   clearActivity as clearDiscordActivity,
 } from "./utils/discordPresence";
 
+import {
+  startAutoDownload,
+  stopAutoDownload,
+  useDefaultEpisodeLister,
+} from "./utils/autoDownload";
 import Sidebar from "./components/Sidebar";
 import SearchModal from "./components/SearchModal";
 import SetupScreen from "./components/SetupScreen";
@@ -141,6 +146,18 @@ export default function App() {
       }
       localStorage.setItem("streambert_lastVersion", version);
     });
+  }, []);
+
+  // ── Smart Downloads ───────────────────────────────────────────────────────
+  // The settings page saved ten options that nothing read, so auto-download was
+  // a checkbox that changed nothing. The provider is registered first and the
+  // interval started second; the interval deliberately does not scan on mount
+  // (autoDownload delays its first pass) so app startup does not fire a burst of
+  // TMDB requests while the window is still coming up.
+  useEffect(() => {
+    useDefaultEpisodeLister();
+    startAutoDownload();
+    return () => stopAutoDownload();
   }, []);
 
   // ── Startup update check ─────────────────────────────────────────────────
