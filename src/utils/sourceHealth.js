@@ -67,14 +67,11 @@ export function nextBestSource(fromId, { isAnime = false } = {}) {
   return candidates[0].id;
 }
 
-const ANIME_SOURCE_IDS = new Set([
-  "allmanga",
-  "enma",
-  "animepahe",
-  "gogoanime",
-  "aniwatch",
-  "nineanime",
-]);
+// HiAnime is the only anime source left. This list used to hold six ids for
+// sources that have all since been removed, which made isAnimeSource() return
+// false for everything — so nextBestSource() never preferred an anime source and
+// anime failover hopped onto whatever movie embed happened to rank highest.
+const ANIME_SOURCE_IDS = new Set(["hianime"]);
 
 export function isAnimeSource(id) {
   return ANIME_SOURCE_IDS.has(id);
@@ -95,11 +92,31 @@ export function subscribeHealth(fn) {
   return () => _listeners.delete(fn);
 }
 
+/**
+ * Drop verdicts for sources that no longer exist.
+ *
+ * The cache is merged, never replaced, so removing a source left its entry
+ * behind forever — six removed anime hosts were still being probed every 6h and
+ * still showed up in the health map. Prune on load and after every refresh.
+ */
+function pruneHealth(map, sources = PLAYER_SOURCES) {
+  const live = new Set(sources.map((s) => s.id));
+  let changed = false;
+  for (const id of Object.keys(map)) {
+    if (!live.has(id)) {
+      delete map[id];
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 /** Load cached verdicts immediately, then schedule a probe. */
 export async function initSourceHealth({ autoRefresh = true } = {}) {
   if (!window.electron?.sourceHealthGet) return _health;
   try {
     _health = (await window.electron.sourceHealthGet()) || {};
+    pruneHealth(_health);
     _refreshedAt = Date.now();
     notify();
   } catch {
@@ -125,6 +142,7 @@ export async function refreshSourceHealth(ids) {
   try {
     const fresh = (await window.electron.sourceHealthCheck(ids)) || {};
     _health = { ..._health, ...fresh };
+    pruneHealth(_health);
     _refreshedAt = Date.now();
     notify();
   } catch {

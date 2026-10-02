@@ -16,24 +16,27 @@ const path = require("path");
 const fs = require("fs");
 
 // Hosts we probe, keyed by the PLAYER_SOURCES id used in the renderer.
-// Kept in sync with PLAYER_SOURCES in src/utils/api.js by test/health.test.mjs.
+//
+// The host MUST match the one PLAYER_SOURCES actually loads. Probing a stale
+// domain reports a working source as flaky/down, which demotes it in the source
+// menu for no reason — that is worse than not probing at all. Five entries here
+// had drifted (vidfast.to vs vidfast.vc, vidcore.pw vs vidcore.org,
+// vidphantom.xyz vs .com, cinextream.to vs .cc, vidsrc3.to vs .created.app) and
+// six pointed at sources that no longer exist at all.
+//
+// test/health-sync.test.mjs fails if this list and PLAYER_SOURCES disagree.
 const PROBE_TARGETS = {
   videasy: "https://player.videasy.to/",
   vidsrc: "https://vsembed.su/",
   vidking: "https://www.vidking.net/",
   vidlink: "https://vidlink.pro/",
   vidspark: "https://vidspark.to/",
-  vidfast: "https://vidfast.to/",
-  vidcore: "https://vidcore.pw/",
-  vidphantom: "https://vidphantom.xyz/",
-  cinextream: "https://cinextream.to/",
-  vidsrc3: "https://vidsrc3.to/",
-  allmanga: "https://allmanga.to/",
-  enma: "https://enma.to/",
-  animepahe: "https://animepahe.com/",
-  gogoanime: "https://gogoanime3.co/",
-  aniwatch: "https://aniwatchtv.to/",
-  nineanime: "https://9anime.pl/",
+  vidfast: "https://vidfast.vc/",
+  vidcore: "https://vidcore.org/",
+  vidphantom: "https://vidphantom.com/",
+  cinextream: "https://cinextream.cc/",
+  vidsrc3: "https://vidsrc3.created.app/",
+  hianime: "https://hianime.at/",
 };
 
 const PROBE_TIMEOUT_MS = 6000;
