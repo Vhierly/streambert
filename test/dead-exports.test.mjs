@@ -164,12 +164,10 @@ const ALLOW = {
 const KNOWN_DEAD = {
   // t3 — watch party: DONE. WebRTC transport + playback bridge wired, and
   // watchPartyUpdateState is called by the modal. Nothing left here.
-  // t4 — trakt scrobble
+  // t4 — trakt scrobble: DONE. traktScrobbleStart/Pause/Stop are called by
+  // src/utils/traktScrobbler.js, which TVPage and MoviePage drive.
   "traktGetClientId": 1,
   "traktSetClientId": 1,
-  "traktScrobbleStart": 1,
-  "traktScrobblePause": 1,
-  "traktScrobbleStop": 1,
   "traktSyncHistory": 1,
   "traktSyncWatchlist": 1,
   "traktGetRecommendations": 1,

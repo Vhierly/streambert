@@ -12,6 +12,7 @@ import {
   applyEpisodeMapping,
   buildEpisodeGroupMap,
 } from "../utils/episodeMappings";
+import { traktSetNowPlaying, traktClearNowPlaying } from "../utils/traktScrobbler";
 import {
   tmdbFetch,
   imgUrl,
@@ -1425,7 +1426,13 @@ export default function TVPage({
   // Tell the download queue whether playback is active ("Don't disturb").
   useEffect(() => {
     announcePlayerState(playing);
-    return () => announcePlayerState(false);
+    return () => {
+      announcePlayerState(false);
+      // Leaving the page closes whatever Trakt still thinks is playing. Without
+      // this, backing out of a detail page leaves the scrobble open and the
+      // episode is never recorded as watched or stopped.
+      traktClearNowPlaying();
+    };
   }, [playing]);
 
   // ── Webview memory cleanup ────────────────────────────────────────────────
@@ -1825,6 +1832,19 @@ export default function TVPage({
       setResolveError(null);
       setSelectedEp(ep);
       setPlaying(true);
+      // Trakt: this episode is now what is playing. The scrobbler keeps its own
+      // copy of the ids, so it is set here rather than read from React state on
+      // every progress tick.
+      traktSetNowPlaying(
+        {
+          id: ep.id,
+          tmdb_id: ep.id,
+          showId: d?.id,
+          season: selectedSeason,
+          episode: ep.episode_number,
+        },
+        "episode",
+      );
       onHistory({
         ...d,
         media_type: "tv",

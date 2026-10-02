@@ -69,6 +69,7 @@ import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 import { initSourceHealth, refreshSourceHealth, rankSources } from "../utils/sourceHealth";
 import { useSourceRecovery } from "../utils/useSourceRecovery";
 import { announcePlayerState } from "../utils/downloadQueue";
+import { traktSetNowPlaying, traktClearNowPlaying } from "../utils/traktScrobbler";
 import PlayerControlBar from "../components/PlayerControlBar";
 import MiniPlayerBar from "../components/MiniPlayerBar";
 
@@ -570,7 +571,13 @@ export default function MoviePage({
   // Tell the download queue whether playback is active ("Don't disturb").
   useEffect(() => {
     announcePlayerState(playing);
-    return () => announcePlayerState(false);
+    return () => {
+      announcePlayerState(false);
+      // Leaving the page closes whatever Trakt still thinks is playing. Without
+      // this, backing out of a detail page leaves the scrobble open and the
+      // episode is never recorded as watched or stopped.
+      traktClearNowPlaying();
+    };
   }, [playing]);
 
   // ── Webview memory cleanup ────────────────────────────────────────────────
@@ -806,6 +813,8 @@ export default function MoviePage({
     setM3u8Url(null);
     setInterceptedSubs([]);
     setPlaying(true);
+    // Trakt: a movie is a single item, so there is no season/episode to carry.
+    traktSetNowPlaying({ id: d?.id, tmdb_id: d?.id }, "movie");
     onHistory({ ...d, media_type: "movie" });
   }, [d, onHistory]);
 
