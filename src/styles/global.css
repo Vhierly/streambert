@@ -4502,6 +4502,145 @@ kbd {
     min-width: 34px;
 }
 
+/* ── Native player (hybrid) ─────────────────────────────────────────────── */
+.native-player {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.native-player__levels {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    gap: 4px;
+    z-index: 4;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.native-player:hover .native-player__levels {
+    opacity: 1;
+}
+
+.native-player__error {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: rgba(0, 0, 0, 0.82);
+    color: var(--text);
+    font-size: 13px;
+    z-index: 6;
+}
+
+/* Control bar */
+.native-ctl {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 0 12px 10px;
+    background: linear-gradient(
+        to top,
+        rgba(0, 0, 0, 0.88) 0%,
+        rgba(0, 0, 0, 0.5) 55%,
+        transparent 100%
+    );
+    z-index: 8;
+    opacity: 1;
+    transition: opacity 0.22s ease;
+}
+
+.native-ctl--hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.native-ctl__seek {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.22);
+    cursor: pointer;
+    margin-bottom: 8px;
+    position: relative;
+}
+
+.native-ctl__seek:hover {
+    height: 6px;
+}
+
+.native-ctl__seek-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--red);
+    transition: width 0.15s linear;
+}
+
+.native-ctl__row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.native-ctl__btn {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 15px;
+    line-height: 1;
+    padding: 5px 7px;
+    border-radius: 6px;
+    cursor: pointer;
+    min-width: 30px;
+    font-variant-numeric: tabular-nums;
+    transition: background 0.12s;
+}
+
+.native-ctl__btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+.native-ctl__time {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.82);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.native-ctl__vol {
+    width: 74px;
+    accent-color: var(--red);
+}
+
+.native-ctl__spacer {
+    flex: 1;
+}
+
+.native-ctl__panel {
+    position: absolute;
+    right: 12px;
+    bottom: 52px;
+    width: 262px;
+    max-height: 62vh;
+    overflow-y: auto;
+    padding: 12px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg) 96%, transparent);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    animation: ctxFadeIn 0.14s ease both;
+}
+
 /* Mini player bar — sits just below the source group on the left */
 .player-mini-group {
     top: 46px;
