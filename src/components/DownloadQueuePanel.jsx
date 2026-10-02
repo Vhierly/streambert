@@ -51,25 +51,6 @@ export default function DownloadQueuePanel({ onDownloadStarted, compact = false 
   const [playerPlaying, setPlayerPlaying] = useState(false);
   const pumpLock = useRef(false);
 
-  // Requeue orphans left over from a previous session, and react when the
-  // player starts/stops so "Don't disturb" actually holds the queue.
-  useEffect(() => {
-    reconcileOnStartup();
-    const off = subscribeQueue((q) => setQueue([...q]));
-    const offProgress = attachProgressBridge();
-    const onPlayerState = (e) => {
-      setPlayerPlaying(!!e.detail?.playing);
-      // Playback stopped → queued items may start now.
-      if (!e.detail?.playing) runPump();
-    };
-    window.addEventListener("streambert:player-state", onPlayerState);
-    return () => {
-      off();
-      offProgress();
-      window.removeEventListener("streambert:player-state", onPlayerState);
-    };
-  }, [runPump]);
-
   const downloaderFolder = storage.get("downloaderFolder") || "";
 
   // Resolve a fresh downloader token per start — tokens are session-scoped and
@@ -95,6 +76,25 @@ export default function DownloadQueuePanel({ onDownloadStarted, compact = false 
       pumpLock.current = false;
     }
   }, [getToken, onDownloadStarted]);
+
+  // Requeue orphans left over from a previous session, and react when the
+  // player starts/stops so "Don't disturb" actually holds the queue.
+  useEffect(() => {
+    reconcileOnStartup();
+    const off = subscribeQueue((q) => setQueue([...q]));
+    const offProgress = attachProgressBridge();
+    const onPlayerState = (e) => {
+      setPlayerPlaying(!!e.detail?.playing);
+      // Playback stopped → queued items may start now.
+      if (!e.detail?.playing) runPump();
+    };
+    window.addEventListener("streambert:player-state", onPlayerState);
+    return () => {
+      off();
+      offProgress();
+      window.removeEventListener("streambert:player-state", onPlayerState);
+    };
+  }, [runPump]);
 
   useEffect(() => {
     runPump();
