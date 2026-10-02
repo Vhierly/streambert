@@ -74,6 +74,11 @@ import {
   GAMEPAD_CLEANUP_JS,
 } from "../utils/playerGamepadScript";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
+import { initSourceHealth, refreshSourceHealth, rankSources } from "../utils/sourceHealth";
+import { useSourceRecovery } from "../utils/useSourceRecovery";
+import { announcePlayerState } from "../utils/downloadQueue";
+import PlayerControlBar from "../components/PlayerControlBar";
+import MiniPlayerBar from "../components/MiniPlayerBar";
 
 // ── Partial-circle progress icon (cached per pct tier) ───────────────────────
 // Uses a single SVG arc. Three instances (25/50/75)
@@ -476,6 +481,48 @@ export default function TVPage({
     () => isAnimeContent(item, details),
     [item.id, details],
   );
+
+  // One probe run per app session, shared across pages.
+  useEffect(() => {
+    initSourceHealth();
+  }, []);
+
+  // ── Source health + auto-recovery ──────────────────────────────────────────
+  const [sourceNotice, setSourceNotice] = useState(null);
+  const handleHop = useCallback((next) => {
+    setM3u8Url(null);
+    setInterceptedSubs([]);
+    resolvedPlayerUrlRef.current = null;
+    setResolvedPlayerUrl(null);
+    resolvingUrlRef.current = false;
+    setResolvingUrl(false);
+    setResolveError(null);
+    setPlayerSource(next);
+  }, []);
+  const handleGiveUp = useCallback(() => {
+    setSourceNotice(
+      "All sources failed to load — open the source menu to pick another.",
+    );
+  }, []);
+  const sourceLabel = useCallback(
+    (id) => getAllSources().find((s) => s.id === id)?.label ?? id,
+    [],
+  );
+  const { health: sourceHealth, recovering } = useSourceRecovery({
+    playing,
+    sourceId: playerSource,
+    webviewRef,
+    isAnime,
+    manualSelectionRef: userManualSelectionRef,
+    onHop: (next, reason) => {
+      handleHop(next);
+      setSourceNotice(
+        `${sourceLabel(playerSource)} ${reason === "no-video" ? "loaded no video" : "failed"} — switched to ${sourceLabel(next)}`,
+      );
+    },
+    onGiveUp: handleGiveUp,
+    resetKey: `${item.id}_s${selectedSeason}_e${selectedEp?.episode_number ?? 0}`,
+  });
 
   const [downloaderFolder, setDownloaderFolder] = useState(
     () => storage.get("downloaderFolder") || "",
@@ -1233,6 +1280,12 @@ export default function TVPage({
   // Show loader instantly when playback starts
   useEffect(() => {
     if (playing) setWebviewLoading(true);
+  }, [playing]);
+
+  // Tell the download queue whether playback is active ("Don't disturb").
+  useEffect(() => {
+    announcePlayerState(playing);
+    return () => announcePlayerState(false);
   }, [playing]);
 
   // ── Webview memory cleanup ────────────────────────────────────────────────
@@ -2191,6 +2244,32 @@ export default function TVPage({
                   }}
                   tabIndex={-1}
                 />
+                <PlayerControlBar
+                  playing={playing}
+                  webviewRef={webviewRef}
+                  pipIdRef={pipWebContentsIdRef}
+                  onNotice={setSourceNotice}
+                />
+                <MiniPlayerBar
+                  playing={playing && !pipOpen}
+                  webviewRef={webviewRef}
+                  playerUrl={
+                    isAsync
+                      ? resolvedPlayerUrl
+                      : getSourceUrl(
+                          playerSource,
+                          "tv",
+                          item.id,
+                          playerEp.season,
+                          playerEp.episode,
+                          {},
+                          playerAccentColor,
+                          playerSubLang,
+                        )
+                  }
+                  title={title}
+                  onNotice={setSourceNotice}
+                />
                 {/* Left-side overlay button group, flex row, no fixed px offsets */}
                 <div className="player-overlay-group">
                   <button
@@ -2288,7 +2367,9 @@ export default function TVPage({
                     style={{ top: menuPos.top, left: menuPos.left }}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {allSources.map((src) => (
+                    {rankSources(allSources, sourceHealth).map((src) => {
+                    const h = sourceHealth[src.id]?.status;
+                    return (
                       <button
                         key={src.id}
                         className={
@@ -2299,6 +2380,7 @@ export default function TVPage({
                         }
                         onClick={() => {
                           setShowSourceMenu(false);
+                          setSourceNotice(null);
                           if (src.id === playerSource) return;
                           // Manual selection wins over auto-failover
                           if (selectedEp) {
@@ -2319,6 +2401,21 @@ export default function TVPage({
                           setResolveError(null);
                         }}
                       >
+                        <span
+                          className={
+                            "source-health-dot" +
+                            (h ? ` source-health-dot--${h}` : "")
+                          }
+                          title={
+                            h === "down"
+                              ? "Last check failed — deprioritised"
+                              : h === "flaky"
+                                ? "Intermittent failures"
+                                : h === "up"
+                                  ? "Healthy"
+                                  : "Not checked yet"
+                          }
+                        />
                         <span>{src.label}</span>
                         {src.tag && (
                           <span className="source-dropdown__tag">
@@ -2331,7 +2428,25 @@ export default function TVPage({
                           </span>
                         )}
                       </button>
-                    ))}
+                    );
+                  })}
+                  <button
+                    className="source-dropdown__item source-dropdown__item--action"
+                    onClick={() => {
+                      setShowSourceMenu(false);
+                      refreshSourceHealth();
+                    }}
+                  >
+                    <span>↻ Check all sources</span>
+                  </button>
+                  </div>
+                )}
+                {(sourceNotice || recovering) && (
+                  <div
+                    className="player-source-notice"
+                    role="status"
+                  >
+                    {recovering ? "Switching source…" : sourceNotice}
                   </div>
                 )}
                 <button

@@ -10,6 +10,7 @@ import {
 } from "../components/Icons";
 import { storage, isElectron, STORAGE_KEYS } from "../utils/storage";
 import SubtitleDownloaderModal from "../components/SubtitleDownloaderModal";
+import DownloadQueuePanel from "../components/DownloadQueuePanel";
 import { imgUrl } from "../utils/api";
 
 const STATUS_CLASS = {
@@ -95,6 +96,7 @@ export default function DownloadsPage({
   onSettings,
   searchOpen: searchOpenProp = false,
   onSearchClose,
+  onDownloadStarted,
 }) {
   const [fileExistsCache, setFileExistsCache] = useState({});
   const [localFiles, setLocalFiles] = useState(
@@ -424,6 +426,7 @@ export default function DownloadsPage({
       )}
 
       {/* ── Toolbar ───────────────────────────────────────────────────────── */}
+      <DownloadQueuePanel onDownloadStarted={onDownloadStarted} compact />
       <div className="dl-toolbar">
         {/* Left: sort controls */}
         <div className="dl-toolbar__group">

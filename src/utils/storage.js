@@ -57,6 +57,8 @@ export const STORAGE_KEYS = {
   // Subtitle settings
   SUBTITLE_ENABLED: "subtitleDownload",
   SUBTITLE_LANG: "subtitleLang",
+  // In-player subtitle styling (size, colour, outline, background, offset)
+  SUBTITLE_STYLE: "subtitleStyle",
   // NOTE: SUBDL_API_KEY, WYZIE_API_KEY and API_KEY are stored encrypted via secureStorage
   SUBDL_API_KEY: "subdlApiKey",
   WYZIE_API_KEY: "wyzieApiKey",

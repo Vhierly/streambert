@@ -3239,6 +3239,169 @@ kbd {
 }
 
 /* ── Downloads toolbar ────────────────────────────────────────────────────── */
+/* ── Download queue ──────────────────────────────────────────────────────── */
+.dlq-panel {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface2);
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+
+.dlq-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    flex-wrap: wrap;
+}
+
+.dlq-head__toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+}
+
+.dlq-head__chevron {
+    color: var(--text3);
+    font-size: 10px;
+}
+
+.dlq-count {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text3);
+}
+
+.dlq-head__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.dlq-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text3);
+    cursor: pointer;
+    user-select: none;
+}
+
+.dlq-list {
+    border-top: 1px solid var(--border);
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 340px;
+    overflow-y: auto;
+}
+
+.dlq-empty,
+.dlq-held {
+    font-size: 12px;
+    color: var(--text3);
+    padding: 12px;
+    text-align: center;
+    line-height: 1.6;
+}
+
+.dlq-held {
+    color: var(--red);
+    background: color-mix(in srgb, var(--red) 8%, transparent);
+    border-radius: 6px;
+    text-align: left;
+}
+
+.dlq-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 11px;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.dlq-item--downloading {
+    background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+
+.dlq-item--error {
+    background: color-mix(in srgb, #f59e0b 10%, transparent);
+}
+
+.dlq-item--done {
+    opacity: 0.55;
+}
+
+.dlq-item__main {
+    flex: 1;
+    min-width: 0;
+}
+
+.dlq-item__title {
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dlq-item__meta {
+    display: flex;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text3);
+    margin-top: 2px;
+    flex-wrap: wrap;
+}
+
+.dlq-item__err {
+    color: #f59e0b;
+}
+
+.dlq-item__bar {
+    height: 3px;
+    background: color-mix(in srgb, var(--text) 12%, transparent);
+    border-radius: 2px;
+    margin-top: 6px;
+    overflow: hidden;
+}
+
+.dlq-item__bar-fill {
+    height: 100%;
+    background: var(--red);
+    transition: width 0.3s ease;
+}
+
+.dlq-item__controls {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.dlq-item__controls .btn {
+    padding: 3px 8px;
+    font-size: 11px;
+}
+
+.dlq-item__controls .btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
 .dl-toolbar {
     display: flex;
     align-items: center;
@@ -3707,6 +3870,65 @@ kbd {
     flex-shrink: 0;
 }
 
+/* Source health indicator in the source dropdown */
+.source-health-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text3);
+    opacity: 0.45;
+    flex-shrink: 0;
+}
+
+.source-health-dot--up {
+    background: #22c55e;
+    opacity: 0.9;
+}
+
+.source-health-dot--flaky {
+    background: #f59e0b;
+    opacity: 0.9;
+}
+
+.source-health-dot--down {
+    background: var(--red);
+    opacity: 0.9;
+}
+
+.source-dropdown__item--action {
+    border-top: 1px solid var(--border);
+    margin-top: 2px;
+    padding-top: 7px;
+    color: var(--text3);
+    font-size: 12px;
+}
+
+.source-dropdown__item--action:hover {
+    color: var(--text);
+}
+
+/* Banner shown while / after the player switches source on its own */
+.player-source-notice {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-size: 12px;
+    color: var(--text2);
+    white-space: nowrap;
+    max-width: 90%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    z-index: 5;
+    pointer-events: none;
+    animation: ctxFadeIn 0.18s ease both;
+}
+
 .player-outer {
     position: relative;
 }
@@ -4159,6 +4381,136 @@ kbd {
 .player-wrap:hover .player-overlay-btn,
 .player-wrap:hover .player-overlay-group {
     opacity: 1;
+}
+
+/* ── Player controls (speed / subtitles / sleep timer) ──────────────────── */
+/* Owns the top-right corner so it doesn't collide with the source + adblock
+   + pop-out group that already sits at top-left. */
+.player-ctl-group {
+    left: auto;
+    right: 12px;
+}
+
+.player-overlay-btn--on {
+    color: var(--red);
+    border-color: color-mix(in srgb, var(--red) 45%, transparent);
+}
+
+.player-ctl-badge {
+    margin-left: 4px;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text2);
+}
+
+.player-ctl-panel {
+    position: absolute;
+    top: 52px;
+    right: 12px;
+    width: 268px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 12px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg) 94%, transparent);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border);
+    box-shadow: 0 12px 32px color-mix(in srgb, #000 55%, transparent);
+    z-index: 20;
+    animation: ctxFadeIn 0.14s ease both;
+}
+
+.player-ctl-panel__title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--text3);
+    margin: 12px 0 7px;
+}
+
+.player-ctl-panel__title:first-child {
+    margin-top: 0;
+}
+
+.player-ctl-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.player-ctl-chip {
+    background: color-mix(in srgb, var(--text) 7%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text2);
+    font-size: 11px;
+    padding: 4px 9px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+
+.player-ctl-chip:hover {
+    color: var(--text);
+}
+
+.player-ctl-chip--on {
+    background: color-mix(in srgb, var(--red) 16%, transparent);
+    border-color: color-mix(in srgb, var(--red) 45%, transparent);
+    color: var(--text);
+}
+
+.player-ctl-chip--danger {
+    color: #f59e0b;
+    border-color: color-mix(in srgb, #f59e0b 40%, transparent);
+}
+
+.player-ctl-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text2);
+    margin-bottom: 8px;
+}
+
+.player-ctl-row > span:first-child {
+    width: 74px;
+    flex-shrink: 0;
+}
+
+.player-ctl-row input[type="range"] {
+    flex: 1;
+    min-width: 0;
+    accent-color: var(--red);
+}
+
+.player-ctl-row input[type="color"] {
+    width: 34px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: none;
+    cursor: pointer;
+}
+
+.player-ctl-val {
+    font-size: 11px;
+    color: var(--text3);
+    font-variant-numeric: tabular-nums;
+    min-width: 34px;
+}
+
+/* Mini player bar — sits just below the source group on the left */
+.player-mini-group {
+    top: 46px;
+}
+
+.player-ctl-note {
+    font-size: 11px;
+    color: var(--text3);
+    line-height: 1.55;
 }
 
 .player-blocked-badge {

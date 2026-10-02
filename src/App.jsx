@@ -1156,6 +1156,7 @@ export default function App() {
                 onSelect={handleSelectResult}
                 searchOpen={dlSearchOpen}
                 onSearchClose={() => setDlSearchOpen(false)}
+                onDownloadStarted={handleDownloadStarted}
                 onSettings={(section) =>
                   navigate("settings", { section: section || null })
                 }

@@ -2760,6 +2760,183 @@ function DiscordRpcSection() {
 }
 
 // ── Section Group Header ─────────────────────────────────────────────────────
+// ── Source health ────────────────────────────────────────────────────────────
+// Live view of the per-host probe results that drive automatic source
+// switching. Embed hosts rot constantly, so this is the place to answer
+// "why did it just switch sources on me?".
+function SourceHealthSection() {
+  const [health, setHealth] = useState({});
+  const [checking, setChecking] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!window.electron?.sourceHealthGet) return;
+    try {
+      setHealth((await window.electron.sourceHealthGet()) || {});
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    load();
+    if (!window.electron?.onSourceHealthUpdated) return;
+    const h = window.electron.onSourceHealthUpdated((data) =>
+      setHealth((prev) => ({ ...prev, ...(data || {}) })),
+    );
+    return () => window.electron.offSourceHealthUpdated?.(h);
+  }, [load]);
+
+  const handleCheck = async () => {
+    setChecking(true);
+    try {
+      const { refreshSourceHealth } = await import("../utils/sourceHealth");
+      setHealth((await refreshSourceHealth()) || {});
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const handleReset = async () => {
+    setChecking(true);
+    try {
+      const { resetAndRefresh } = await import("../utils/sourceHealth");
+      setHealth((await resetAndRefresh()) || {});
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const entries = Object.entries(health);
+  const sorted = entries.sort((a, b) => {
+    const rank = { down: 0, flaky: 1, unknown: 2, up: 3 };
+    return (
+      (rank[b[1]?.status] ?? 2) - (rank[a[1]?.status] ?? 2) ||
+      a[0].localeCompare(b[0])
+    );
+  });
+  const downCount = entries.filter(([, h]) => h?.status === "down").length;
+
+  return (
+    <div style={{ marginBottom: 40 }}>
+      <div className="settings-section-title">Source Health</div>
+      <div
+        style={{
+          fontSize: 13,
+          color: "var(--text3)",
+          marginBottom: 16,
+          lineHeight: 1.6,
+        }}
+      >
+        Streambert checks every streaming host on a schedule. Sources that fail
+        are moved to the bottom of the source list, and the player automatically
+        switches to a working one when a host stops responding.
+        {downCount > 0 && (
+          <>
+            {" "}
+            <span style={{ color: "var(--red)" }}>
+              {downCount} source{downCount > 1 ? "s are" : " is"} currently
+              down.
+            </span>
+          </>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button
+          className="btn btn-primary"
+          onClick={handleCheck}
+          disabled={checking}
+        >
+          {checking ? "Checking…" : "Check all sources"}
+        </button>
+        <button
+          className="btn btn-ghost"
+          onClick={handleReset}
+          disabled={checking}
+        >
+          Reset &amp; re-check
+        </button>
+      </div>
+
+      {!window.electron?.sourceHealthGet ? (
+        <div style={{ fontSize: 12, color: "var(--text3)" }}>
+          Source health requires the desktop app.
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+            gap: 8,
+          }}
+        >
+          {sorted.length === 0 && (
+            <div style={{ fontSize: 12, color: "var(--text3)" }}>
+              No results yet — run a check.
+            </div>
+          )}
+          {sorted.map(([id, h]) => {
+            const status = h?.status || "unknown";
+            const color =
+              status === "up"
+                ? "#22c55e"
+                : status === "flaky"
+                  ? "#f59e0b"
+                  : status === "down"
+                    ? "var(--red)"
+                    : "var(--text3)";
+            return (
+              <div
+                key={id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "7px 10px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  fontSize: 12,
+                }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: color,
+                    flexShrink: 0,
+                  }}
+                />
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {id}
+                </span>
+                <span
+                  style={{
+                    marginLeft: "auto",
+                    color: "var(--text3)",
+                    fontSize: 10,
+                    flexShrink: 0,
+                  }}
+                >
+                  {status === "up" && h.ms != null
+                    ? `${h.ms}ms`
+                    : status === "down"
+                      ? "down"
+                      : status}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SectionGroupHeader({ title, subtitle }) {
   return (
     <div style={{ marginBottom: 32, marginTop: 4 }}>
@@ -5270,6 +5447,10 @@ export default function SettingsPage({
 
           <SmartDownloadsSection />
           <Divider />
+
+          <SourceHealthSection />
+          <Divider />
+
           <ServerClientSection />
           <Divider />
           <AddonGallerySection />

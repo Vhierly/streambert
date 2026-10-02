@@ -121,6 +121,10 @@ contextBridge.exposeInMainWorld("electron", {
   clearAppCache: () => ipcRenderer.invoke("clear-app-cache"),
   queryVideoProgress: (webContentsId) =>
     ipcRenderer.invoke("query-video-progress", webContentsId),
+  // Run JS in every frame of a player webContents (speed, track selection,
+  // subtitle styling). Same-origin rules don't apply from main.
+  playerExec: (webContentsId, expr) =>
+    ipcRenderer.invoke("player-exec", { webContentsId, expr }),
   clearWatchData: () => ipcRenderer.invoke("clear-watch-data"),
   deleteAllDownloads: () => ipcRenderer.invoke("delete-all-downloads"),
   resetApp: () => ipcRenderer.invoke("reset-app"),
@@ -218,6 +222,23 @@ contextBridge.exposeInMainWorld("electron", {
   traktIsConnected: () => ipcRenderer.invoke("trakt-is-connected"),
   traktApi: (method, path, body) =>
     ipcRenderer.invoke("trakt-api", { method, path, body }),
+
+  // Stream source health (probe + rank dead hosts)
+  sourceHealthGet: () => ipcRenderer.invoke("source-health-get"),
+  sourceHealthCheck: (ids) => ipcRenderer.invoke("source-health-check", ids),
+  sourceHealthReportFailure: (sourceId) =>
+    ipcRenderer.invoke("source-health-report-failure", sourceId),
+  sourceHealthReportSuccess: (sourceId) =>
+    ipcRenderer.invoke("source-health-report-success", sourceId),
+  sourceHealthReset: () => ipcRenderer.invoke("source-health-reset"),
+  sourceHealthTargets: () => ipcRenderer.invoke("source-health-targets"),
+  onSourceHealthUpdated: (cb) => {
+    const h = (_, data) => cb(data);
+    ipcRenderer.on("source-health-updated", h);
+    return h;
+  },
+  offSourceHealthUpdated: (h) =>
+    ipcRenderer.removeListener("source-health-updated", h),
 
   // Smart Downloads queue management
   getSmartDownloadSettings: () =>

@@ -103,6 +103,7 @@ const subtitlesIpc = require("./src/ipc/subtitles");
 const hianimeIpc = require("./src/ipc/hianime");
 const playerIpc = require("./src/ipc/player");
 const discordRpc = require("./src/ipc/discordRpc");
+const sourceHealthIpc = require("./src/ipc/sourceHealth");
 
 const BLOCKED_HOSTS = [
   "*://www.google-analytics.com/*",
@@ -799,6 +800,7 @@ playerIpc.register(getMainWindow, {
 });
 blockStats.init(getMainWindow);
 discordRpc.register(ipcMain);
+sourceHealthIpc.register(getMainWindow);
 
 // ── Trakt.tv IPC handlers (main process — avoids CORS) ───────────────────────
 // All Trakt OAuth + API calls run here, tokens stay in renderer localStorage.

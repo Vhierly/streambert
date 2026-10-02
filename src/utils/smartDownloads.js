@@ -22,7 +22,22 @@ export function getSmartDownloadSettings() {
       convertPreset: "medium", // fast, medium, slow
     };
   } catch {
-    return getSmartDownloadSettings(); // safe fallback
+    // Was `return getSmartDownloadSettings()` — that re-throws into the same
+    // failing JSON.parse and blows the stack, which is the opposite of a safe
+    // fallback. Return the defaults directly instead.
+    return {
+      enabled: false,
+      autoDownloadNewEpisodes: true,
+      preferredQuality: "1080p",
+      scheduleEnabled: false,
+      scheduleStartHour: 2,
+      scheduleEndHour: 6,
+      maxConcurrent: 2,
+      maxBandwidth: 0,
+      autoConvert: false,
+      convertFormat: "h265",
+      convertPreset: "medium",
+    };
   }
 }
 

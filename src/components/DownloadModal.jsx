@@ -12,6 +12,7 @@ import {
   sourceBadgeStyle,
   sourceBadgeLabel,
 } from "../utils/subtitles";
+import { addToQueue } from "../utils/downloadQueue";
 
 // ── Subtitle Browser (standalone component to avoid re-mount on parent re-render) ──
 export function SubtitleBrowser({
@@ -391,6 +392,8 @@ export default function DownloadModal({
   const [downloader, setDownloader] = useState(null);
   const [checking, setChecking] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState(null);
+  const [queued, setQueued] = useState(false);
+  const [queuedNow, setQueuedNow] = useState(0);
 
   const [subEnabled, setSubEnabled] = useState(
     () =>
@@ -582,6 +585,34 @@ export default function DownloadModal({
       setDownloadStatus("ok");
     } else {
       setDownloadStatus(result.error || "Failed to start");
+    }
+  };
+
+  // ── Queue instead of immediate start ─────────────────────────────────────
+  const handleQueue = async () => {
+    if (!m3u8Url) return;
+    const res = addToQueue(
+      {
+        m3u8Url,
+        subtitles: [...subtitles],
+        downloadPath,
+        mediaId,
+        mediaType,
+        season,
+        episode,
+        posterPath,
+        tmdbId: tmdbId || mediaId || null,
+      },
+      { posterPath, name: mediaName },
+    );
+    if (res.added) {
+      setQueued(true);
+      setQueuedNow(res.queue.length);
+      setDownloadStatus(
+        `Added to queue (${res.queue.length} item${res.queue.length > 1 ? "s" : ""})`,
+      );
+    } else {
+      setDownloadStatus("Already in the queue");
     }
   };
 
@@ -1169,6 +1200,24 @@ export default function DownloadModal({
                         : "Start Download"}
                     </button>
                   )}
+
+                  {/* Queue instead of starting now — lets you line up a whole
+                      season and control the order from the Downloads page. */}
+                  <button
+                    className="btn btn-ghost"
+                    style={{ width: "100%", justifyContent: "center", marginTop: 8 }}
+                    onClick={handleQueue}
+                    disabled={!m3u8Url || queued}
+                    title={
+                      !m3u8Url
+                        ? "This source didn't expose a playlist URL"
+                        : queued
+                          ? `${queuedNow} item${queuedNow === 1 ? "" : "s"} in the queue`
+                          : "Add to the download queue instead of starting immediately"
+                    }
+                  >
+                    {queued ? "Queued ✓" : "Add to queue"}
+                  </button>
 
                   {downloadStatus === "ok" && (
                     <div style={{ textAlign: "center", padding: "12px 0" }}>

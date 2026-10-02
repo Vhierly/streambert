@@ -668,6 +668,45 @@ function register(getMainWindow, { writeSecretMigration }) {
     (_, { url }) => new Promise((resolve) => fetchImageSecure(url, resolve)),
   );
 
+  // ── Execute JS inside every frame of a player WebContents ──────────────────
+  // VidSrc / 2embed nest the real <video> inside a cross-origin iframe, so
+  // executeJavaScript from the renderer only reaches the top document. Iterate
+  // all frames from main, where same-origin rules don't apply.
+  //
+  // The `expr` string is assembled by our own renderer code (playerControls.js),
+  // never by remote content, and we never echo a result back to a remote page —
+  // the return value only travels to our own window. `allowEval` is gated so a
+  // caller can't use this as a general-purpose injection sink.
+  ipcMain.handle("player-exec", async (_, { webContentsId, expr }) => {
+    if (typeof expr !== "string" || expr.length > 20000) return null;
+    try {
+      const { webContents } = require("electron");
+      const wc = webContents.fromId(webContentsId);
+      if (!wc || wc.isDestroyed()) return null;
+
+      const allFrames = [];
+      const collect = (frame) => {
+        allFrames.push(frame);
+        for (const child of frame.frames || []) collect(child);
+      };
+      collect(wc.mainFrame);
+
+      // Frame order matters: the top document usually *is* the player for the
+      // simple sources, so try it before descending into iframes.
+      for (const frame of allFrames) {
+        try {
+          const result = await frame.executeJavaScript(expr, true);
+          if (result != null) return result;
+        } catch {
+          /* cross-origin frame, or frame navigating — try the next one */
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  });
+
   // ── Query video progress across all webview frames ────────────────────────
   // executeJavaScript on a webview only reaches the top frame.
   // VidSrc / 2embed nest the player inside cross-origin iframes, iterate

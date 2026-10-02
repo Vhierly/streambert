@@ -66,6 +66,11 @@ import {
   GAMEPAD_CLEANUP_JS,
 } from "../utils/playerGamepadScript";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
+import { initSourceHealth, refreshSourceHealth, rankSources } from "../utils/sourceHealth";
+import { useSourceRecovery } from "../utils/useSourceRecovery";
+import { announcePlayerState } from "../utils/downloadQueue";
+import PlayerControlBar from "../components/PlayerControlBar";
+import MiniPlayerBar from "../components/MiniPlayerBar";
 
 export default function MoviePage({
   item,
@@ -112,6 +117,11 @@ export default function MoviePage({
     userManualSelectionRef.current = false;
   }, [item.id]);
 
+  // One probe run per app session, shared across pages.
+  useEffect(() => {
+    initSourceHealth();
+  }, []);
+
   // Accent colour + subtitle lang come from App-level state (via props),
   // so they are always fresh after Settings save without any extra storage reads.
   const playerAccentColor = playerSettings?.accentColor ?? null;
@@ -155,6 +165,45 @@ export default function MoviePage({
     () => isAnimeContent(item, details),
     [item.id, details],
   );
+
+  // ── Source health + auto-recovery ──────────────────────────────────────────
+  // When the current host dies (dead domain, Cloudflare wall, embed 404) we hop
+  // to the best live alternative instead of leaving the user on a black frame.
+  const [sourceNotice, setSourceNotice] = useState(null);
+  const handleHop = useCallback((next) => {
+    setM3u8Url(null);
+    setInterceptedSubs([]);
+    resolvedPlayerUrlRef.current = null;
+    setResolvedPlayerUrl(null);
+    resolvingUrlRef.current = false;
+    setResolvingUrl(false);
+    setResolveError(null);
+    setPlayerSource(next);
+  }, []);
+  const handleGiveUp = useCallback(() => {
+    setSourceNotice(
+      "All sources failed to load — open the source menu to pick another.",
+    );
+  }, []);
+  const sourceLabel = useCallback(
+    (id) => getAllSources().find((s) => s.id === id)?.label ?? id,
+    [],
+  );
+  const { health: sourceHealth, recovering } = useSourceRecovery({
+    playing,
+    sourceId: playerSource,
+    webviewRef,
+    isAnime,
+    manualSelectionRef: userManualSelectionRef,
+    onHop: (next, reason) => {
+      handleHop(next);
+      setSourceNotice(
+        `${sourceLabel(playerSource)} ${reason === "no-video" ? "loaded no video" : "failed"} — switched to ${sourceLabel(next)}`,
+      );
+    },
+    onGiveUp: handleGiveUp,
+    resetKey: item.id,
+  });
   const [downloaderFolder, setDownloaderFolder] = useState(
     () => storage.get("downloaderFolder") || "",
   );
@@ -516,6 +565,12 @@ export default function MoviePage({
   // Show loader instantly when play starts
   useEffect(() => {
     if (playing) setWebviewLoading(true);
+  }, [playing]);
+
+  // Tell the download queue whether playback is active ("Don't disturb").
+  useEffect(() => {
+    announcePlayerState(playing);
+    return () => announcePlayerState(false);
   }, [playing]);
 
   // ── Webview memory cleanup ────────────────────────────────────────────────
@@ -1139,6 +1194,32 @@ export default function MoviePage({
                     : "visible",
               }}
             />
+            <PlayerControlBar
+              playing={playing}
+              webviewRef={webviewRef}
+              pipIdRef={pipWebContentsIdRef}
+              onNotice={setSourceNotice}
+            />
+            <MiniPlayerBar
+              playing={playing && !pipOpen}
+              webviewRef={webviewRef}
+              playerUrl={
+                sourceIsAsync(playerSource)
+                  ? resolvedPlayerUrl
+                  : getSourceUrl(
+                      playerSource,
+                      "movie",
+                      item.id,
+                      null,
+                      null,
+                      {},
+                      playerAccentColor,
+                      playerSubLang,
+                    )
+              }
+              title={item.title}
+              onNotice={setSourceNotice}
+            />
             {/* Left-side overlay button group, flex row, no fixed px offsets */}
             <div className="player-overlay-group">
               <button
@@ -1232,42 +1313,79 @@ export default function MoviePage({
                 style={{ top: menuPos.top, left: menuPos.left }}
                 onClick={(e) => e.stopPropagation()}
               >
-                {allSources.map((src) => (
-                  <button
-                    key={src.id}
-                    className={
-                      "source-dropdown__item" +
-                      (playerSource === src.id
-                        ? " source-dropdown__item--active"
-                        : "")
-                    }
-                    onClick={() => {
-                      setShowSourceMenu(false);
-                      if (src.id === playerSource) return;
-                      // Manual selection wins over auto-failover
-                      clearFailoverSource(`movie_${item.id}_${dubMode}`);
-                      setPlayerSource(src.id);
-                      storage.set(STORAGE_KEYS.PLAYER_SOURCE, src.id);
-                      // Lock: user manually selected a source, don't override with auto-switch
-                      userManualSelectionRef.current = true;
-                      setM3u8Url(null);
-                      setInterceptedSubs([]);
-                      resolvedPlayerUrlRef.current = null;
-                      setResolvedPlayerUrl(null);
-                      resolvingUrlRef.current = false;
-                      setResolvingUrl(false);
-                      setResolveError(null);
-                    }}
-                  >
-                    <span>{src.label}</span>
-                    {src.tag && (
-                      <span className="source-dropdown__tag">{src.tag}</span>
-                    )}
-                    {src.note && (
-                      <span className="source-dropdown__note">{src.note}</span>
-                    )}
-                  </button>
-                ))}
+                {rankSources(allSources, sourceHealth).map((src) => {
+                  const h = sourceHealth[src.id]?.status;
+                  return (
+                    <button
+                      key={src.id}
+                      className={
+                        "source-dropdown__item" +
+                        (playerSource === src.id
+                          ? " source-dropdown__item--active"
+                          : "")
+                      }
+                      onClick={() => {
+                        setShowSourceMenu(false);
+                        setSourceNotice(null);
+                        if (src.id === playerSource) return;
+                        // Manual selection wins over auto-failover
+                        clearFailoverSource(`movie_${item.id}_${dubMode}`);
+                        setPlayerSource(src.id);
+                        storage.set(STORAGE_KEYS.PLAYER_SOURCE, src.id);
+                        // Lock: user manually selected a source, don't override with auto-switch
+                        userManualSelectionRef.current = true;
+                        setM3u8Url(null);
+                        setInterceptedSubs([]);
+                        resolvedPlayerUrlRef.current = null;
+                        setResolvedPlayerUrl(null);
+                        resolvingUrlRef.current = false;
+                        setResolvingUrl(false);
+                        setResolveError(null);
+                      }}
+                    >
+                      <span
+                        className={
+                          "source-health-dot" +
+                          (h ? ` source-health-dot--${h}` : "")
+                        }
+                        title={
+                          h === "down"
+                            ? "Last check failed — deprioritised"
+                            : h === "flaky"
+                              ? "Intermittent failures"
+                              : h === "up"
+                                ? "Healthy"
+                                : "Not checked yet"
+                        }
+                      />
+                      <span>{src.label}</span>
+                      {src.tag && (
+                        <span className="source-dropdown__tag">
+                          {src.tag}
+                        </span>
+                      )}
+                      {src.note && (
+                        <span className="source-dropdown__note">
+                          {src.note}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+                <button
+                  className="source-dropdown__item source-dropdown__item--action"
+                  onClick={() => {
+                    setShowSourceMenu(false);
+                    refreshSourceHealth();
+                  }}
+                >
+                  <span>↻ Check all sources</span>
+                </button>
+              </div>
+            )}
+            {(sourceNotice || recovering) && (
+              <div className="player-source-notice" role="status">
+                {recovering ? "Switching source…" : sourceNotice}
               </div>
             )}
             <button
