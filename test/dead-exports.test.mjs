@@ -1,0 +1,263 @@
+// ── dead-exports: no renderer utility may export a symbol nobody calls ──────
+//
+// Deep-dive finding behind v2.9.0: 38 exports across the utility layer had zero
+// references anywhere in the codebase. Five of them were why entire features
+// looked finished and were not:
+//
+//   serverClient.js      Jellyfin/Plex could "connect" but had no UI to browse
+//   trakt.js             auth worked; nothing ever scrobbled
+//   addons.js            addons install but resolveWithAddon is never called
+//   smartDownloads.js    Settings saves 10 options that nothing reads
+//   watchParty.js        WebSocket lines commented out — two devices never sync
+//
+// This test locks that shut, so the next five features cannot rot the same way.
+//
+//   node test/dead-exports.test.mjs
+//
+// The suite starts red: KNOWN_DEAD below is the measured baseline, not an
+// excuse. Each entry must disappear from it as the feature it belongs to gets
+// wired up, and the count is a ratchet — it may only go down. Widen the
+// allowlist to make this green again and the ratchet check fails.
+//
+// Two failure classes, reported separately:
+//
+//   DEAD          exported, referenced nowhere — including its own file.
+//                 Wire it up or delete it.
+//   OVER-EXPORTED used internally but needlessly `export`ed. A note, never a
+//                 failure.
+
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join, relative, resolve } from "node:path";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const SKIP_DIRS = new Set(["node_modules", "dist", "release", ".git", "build"]);
+
+function collect(dir, acc = []) {
+  for (const entry of readdirSync(dir)) {
+    if (SKIP_DIRS.has(entry)) continue;
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) collect(full, acc);
+    else if (/\.(js|jsx|mjs)$/.test(entry)) acc.push(full);
+  }
+  return acc;
+}
+
+const sources = [
+  ...collect(join(root, "src")),
+  ...collect(join(root, "test")),
+  ...collect(join(root, "scripts")),
+  join(root, "index.js"),
+  join(root, "preload.js"),
+  join(root, "popout-preload.js"),
+].filter((p) => {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+});
+
+// This file is excluded from the corpus on purpose. Its own KNOWN_DEAD table
+// names every symbol it is looking for, so including it would make all of them
+// look referenced and report zero dead exports — a green run that proves
+// nothing.
+const SELF = fileURLToPath(import.meta.url);
+const texts = new Map(
+  sources
+    .filter((p) => resolve(p) !== SELF)
+    .map((p) => [p, readFileSync(p, "utf8")]),
+);
+const utilFiles = collect(join(root, "src", "utils"));
+
+// ── Parse exports ──────────────────────────────────────────────────────────
+const DECL = [
+  /^export\s+(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm,
+  /^export\s+(?:const|let|var)\s+([A-Za-z0-9_$]+)/gm,
+  /^export\s*\{([^}]+)\}/gm,
+];
+
+function parseExports(src) {
+  const names = new Set();
+  for (const re of DECL) {
+    for (const m of src.matchAll(re)) {
+      if (re.source.includes("\\{")) {
+        // `export { a, b as c }` — the alias is the imported name.
+        for (const part of m[1].split(","))
+          names.add(part.split(/\s+as\s+/).pop().trim());
+      } else names.add(m[1]);
+    }
+  }
+  names.delete("");
+  return names;
+}
+
+// ── Measure ────────────────────────────────────────────────────────────────
+const dead = []; // unreachable: zero refs anywhere
+const overExported = []; // used inside its own file only
+let exportCount = 0;
+
+for (const file of utilFiles) {
+  const src = texts.get(file);
+  const rel = relative(root, file);
+  for (const name of parseExports(src)) {
+    exportCount++;
+    const word = new RegExp(`\\b${name.replace(/[$]/g, "\\$")}\\b`, "g");
+    let usedElsewhere = false;
+    for (const [p, t] of texts) {
+      if (p !== file && word.test(t)) {
+        usedElsewhere = true;
+        break;
+      }
+    }
+    if (usedElsewhere) continue;
+    const selfRefs = (src.match(word) || []).length;
+    (selfRefs > 1 ? overExported : dead).push({ name, rel });
+  }
+}
+
+const liveNames = new Set();
+for (const f of utilFiles) for (const n of parseExports(texts.get(f))) liveNames.add(n);
+
+// ── Allowlists ─────────────────────────────────────────────────────────────
+// Reviewed and deliberately left alone: either a duplicate of a live path, a
+// constant, or internals reachable through a wrapper. Keyed by export name so a
+// moved export stays covered.
+const ALLOW = {
+  BACKUP_KEYS: "backup manifest, read by index.js at runtime",
+  MAX_HOPS: "source-recovery tuning constant",
+  NO_VIDEO_GRACE_MS: "source-recovery tuning constant",
+  STALE_TTL_MS: "health-cache TTL constant",
+  QUEUE_KEY: "downloadQueue storage key constant",
+  SETTINGS_KEY: "downloadQueue storage key constant",
+  DEFAULT_SETTINGS: "downloadQueue defaults, read internally",
+  queueKey: "downloadQueue helper, read internally",
+  isPlayerPlaying: "downloadQueue helper, read internally",
+  canStartNow: "downloadQueue helper, read internally",
+  startGamepadLoop: "gamepad internals, read internally",
+  setGamepadFocus: "spatial nav internals, read internally",
+  getGamepadFocus: "spatial nav internals, read internally",
+  certToMinAge: "age-rating internals, read internally",
+  getCurrentBandwidthUsage: "smart-download helper, read internally",
+  saveDownloadQueue: "smart-download helper, read internally",
+  healthySources: "source-health internals, read internally",
+  isAnimeSource: "source-health internals, read internally",
+  jellyfinGetLibraries: "server lib layer, reached via serverGetLibraries",
+  jellyfinGetItems: "server lib layer, reached via serverGetItems",
+  plexGetLibraries: "server lib layer, reached via serverGetLibraries",
+  plexGetItems: "server lib layer, reached via serverGetItems",
+  GITHUB_REPO: "updates internals, via checkForUpdatesWithFallback",
+  CODEBERG_REPO: "updates internals, via checkForUpdatesWithFallback",
+  normaliseVersion: "updates internals, via checkForUpdatesWithFallback",
+  semverGt: "updates internals, via checkForUpdatesWithFallback",
+  checkForUpdates: "updates internals, via checkForUpdatesWithFallback",
+  getAddons: "addon gallery, exercised via getAddonGallery",
+  loadAddons: "addon loader, called from getAddonGallery",
+};
+
+// The measured baseline. These 39 are real dead code today; each one is work
+// item t3–t8 in the v2.9.0 push, or is slated for deletion. Shrinks as they
+// land. Count is enforced.
+const KNOWN_DEAD = {
+  // t3 — watch party gains real transport
+  "watchPartyUpdateState": 1,
+  "watchPartyHandleHostState": 1,
+  // t4 — trakt scrobble
+  "traktGetClientId": 1,
+  "traktSetClientId": 1,
+  "traktScrobbleStart": 1,
+  "traktScrobblePause": 1,
+  "traktScrobbleStop": 1,
+  "traktSyncHistory": 1,
+  "traktSyncWatchlist": 1,
+  "traktGetRecommendations": 1,
+  "traktGetShowProgress": 1,
+  "traktSearch": 1,
+  "traktGetCalendar": 1,
+  "traktGetTrending": 1,
+  "traktGetPopular": 1,
+  // t5 — addon registry becomes the source resolver
+  "getAddon": 1,
+  "isAddonLoaded": 1,
+  "unregisterAddon": 1,
+  "resolveWithAddon": 1,
+  // t6 — smart downloads gets a scheduler
+  "isWithinSchedule": 1,
+  "shouldAutoDownload": 1,
+  "matchesQuality": 1,
+  "canStartDownload": 1,
+  // t7 — jellyfin/plex library browser
+  "isServerConnected": 1,
+  "jellyfinGetPlaybackInfo": 1,
+  "jellyfinReportProgress": 1,
+  "serverGetStreamUrl": 1,
+  // t8 — ai recommendations reach the home page
+  "getSimilarRecommendations": 1,
+  "getBecauseYouWatched": 1,
+  // genuinely orphaned: no feature claims these, slated for deletion
+  "clearAniSkipCache": 1,
+  "buildSearchUrl": 1,
+  "getAllCustomMetadata": 1,
+  "importCustomMetadata": 1,
+  "searchCustomMetadata": 1,
+  "hasCustomMetadata": 1,
+  "saveHomeLayout": 1,
+  "loadStartPage": 1,
+  "getHealthMap": 1,
+  "stopHealthTimer": 1,
+};
+
+const BASELINE_COUNT = Object.keys(KNOWN_DEAD).length;
+
+const problems = [];
+
+// 1. Anything dead that is neither allowlisted nor declared in KNOWN_DEAD.
+const unexplained = dead.filter(
+  (d) => !(d.name in ALLOW) && !(d.name in KNOWN_DEAD),
+);
+for (const d of unexplained)
+  problems.push(`new dead export — wire it up, delete it, or justify it: ${d.rel}: ${d.name}`);
+
+// 2. KNOWN_DEAD entries that no longer exist (they got wired up, or deleted).
+const gone = Object.keys(KNOWN_DEAD).filter((n) => !dead.some((d) => d.name === n));
+if (gone.length) {
+  problems.push(
+    `ratchet: ${gone.length} KNOWN_DEAD entr(ies) are now referenced or removed — ` +
+      `delete them from the list so the count stays honest:`,
+  );
+  for (const g of gone) problems.push(`  • ${g}`);
+}
+
+// 3. The count itself. It may only shrink.
+if (dead.length > BASELINE_COUNT) {
+  problems.push(
+    `dead exports went UP: ${dead.length} now, baseline was ${BASELINE_COUNT}`,
+  );
+}
+
+// 4. Stale allowlist entries rot silently and would hide a future reuse.
+const staleAllow = Object.keys(ALLOW).filter((n) => !liveNames.has(n));
+if (staleAllow.length) {
+  problems.push(`stale allowlist — these exports no longer exist: ${staleAllow.join(", ")}`);
+}
+
+if (problems.length) {
+  console.error(`FAIL — dead-exports:\n\n${problems.map((p) => `  ${p}`).join("\n")}\n`);
+  process.exit(1);
+}
+
+if (overExported.length) {
+  const shown = overExported.slice(0, 4).map((o) => o.name).join(", ");
+  console.log(
+    `note — ${overExported.length} over-exported (internal-only, harmless): ${shown}` +
+      (overExported.length > 4 ? ", …" : ""),
+  );
+}
+
+const progress = BASELINE_COUNT - dead.length;
+console.log(
+  `PASS — ${exportCount} exports checked · ${dead.length} dead ` +
+    `(baseline ${BASELINE_COUNT}` +
+    (progress ? `, ${progress} fixed` : "") +
+    `) · ${overExported.length} over-exported`,
+);

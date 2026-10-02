@@ -71,6 +71,8 @@ export default function NativePlayer({
   const hlsRef = useRef(null);
   const [levels, setLevels] = useState([]);
   const [level, setLevel] = useState(-1); // -1 = auto
+  const [audioTracks, setAudioTracks] = useState([]);
+  const [audioTrack, setAudioTrack] = useState(-1); // -1 = default/first
   const [status, setStatus] = useState("idle"); // idle|loading|ready|error
   const [errorMsg, setErrorMsg] = useState(null);
   const [retry, setRetry] = useState(0);
@@ -103,6 +105,13 @@ export default function NativePlayer({
       } catch {}
       hlsRef.current = null;
     }
+    // Clear the pickers as the instance goes: a new source gets its own track
+    // list from MANIFEST_PARSED, and leaving the old chips up in the meantime
+    // would offer renditions that belong to a stream no longer on screen.
+    setLevels([]);
+    setAudioTracks([]);
+    setLevel(-1);
+    setAudioTrack(-1);
   }, []);
 
   useEffect(() => destroyHls, [destroyHls]);
@@ -173,12 +182,35 @@ export default function NativePlayer({
         label: l.height ? `${l.height}p` : `${Math.round((l.bitrate || 0) / 1000)}kbps`,
       }));
       setLevels(lvls);
+
+      // Audio tracks come off the master playlist's EXT-X-MEDIA entries. Most
+      // streams expose exactly one, so the selector stays hidden unless there
+      // is a genuine choice to make (dub, commentary, separate music track).
+      const tracks = (hls.audioTracks || []).map((t, i) => ({
+        index: i,
+        label: t.name || t.lang || t.groupId || `Audio ${i + 1}`,
+        lang: t.lang || "",
+        default: !!t.default,
+      }));
+      setAudioTracks(tracks);
+      setAudioTrack(-1);
+      // hls.js defaults to the first track unless told otherwise, but a track
+      // flagged default in the manifest should win so we match the source.
+      const def = tracks.findIndex((t) => t.default);
+      if (def > 0 && hls.audioTracks) {
+        hls.audioTrack = def;
+        setAudioTrack(def);
+      }
+
       onLoaded();
     });
 
     hls.on(Hls.Events.LEVEL_SWITCHED, (_e, data) => {
-      const h = hls.levels?.[data.level]?.height;
-      if (h) setLevel((cur) => (cur === -1 ? -1 : cur));
+      // Track which rendition is actually decoding so the UI can mark it.
+      // Auto is -1 and must stay -1: the whole point of auto is that hls.js
+      // picks. Recording the resolved level here would pin the picker to
+      // whatever happened to win the first ABR decision.
+      setLevel((cur) => (cur === -1 ? -1 : data.level));
     });
 
     hls.on(Hls.Events.ERROR, (_e, data) => {
@@ -282,6 +314,15 @@ export default function NativePlayer({
     }
   }, []);
 
+  const switchAudio = useCallback((idx) => {
+    setAudioTrack(idx);
+    if (hlsRef.current?.audioTracks?.length) {
+      // hls.js audioTrack is a 0-based index, not -1 for "auto" — there is no
+      // auto for audio, so clamp a negative selection back to the first track.
+      hlsRef.current.audioTrack = idx < 0 ? 0 : idx;
+    }
+  }, []);
+
   return (
     <div className="native-player">
       <video
@@ -331,6 +372,30 @@ export default function NativePlayer({
               onClick={() => switchLevel(l.index)}
             >
               {l.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Only rendered when there is a real choice. A single-audio stream gets
+          nothing, matching PlayerControlBar, which shows a "single audio track"
+          note instead of a one-option menu. */}
+      {audioTracks.length > 1 && (
+        <div
+          className="native-player__levels native-player__levels--audio"
+          role="group"
+          aria-label="Audio track"
+        >
+          {audioTracks.map((t) => (
+            <button
+              key={t.index}
+              className={
+                "player-ctl-chip" + (audioTrack === t.index ? " player-ctl-chip--on" : "")
+              }
+              onClick={() => switchAudio(t.index)}
+              title={t.lang ? `${t.label} (${t.lang})` : t.label}
+            >
+              {t.label}
             </button>
           ))}
         </div>

@@ -276,8 +276,22 @@ try {
     const clicked = await cdp.evaluate(`
       (() => {
         const label = ${JSON.stringify(route)};
-        const el = Array.from(document.querySelectorAll('button,[role=button],a'))
-          .find(b => (b.innerText||'').trim().toLowerCase() === label);
+        // Sidebar buttons are matched on their visible label, which is not always
+        // the route name: the History route is labelled "Library & History".
+        // Matching on exact text alone therefore reported "missing" for a route
+        // that exists and works — a false negative that reads like an app bug.
+        const buttons = Array.from(
+          document.querySelectorAll('button,[role=button],a')
+        ).filter(b => (b.innerText||'').trim());
+        const norm = s => s.toLowerCase();
+        const exact = buttons.find(
+          b => norm(b.innerText.trim()) === label
+        );
+        const el = exact || buttons.find(b => {
+          const t = norm(b.innerText.trim());
+          return t === label ||
+            t.split(/\\s*&\\s*|\\s*\\/\\s*/).some(part => part.trim() === label);
+        });
         if (!el) return 'missing';
         el.click();
         return 'clicked';

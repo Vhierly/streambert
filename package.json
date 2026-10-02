@@ -12,6 +12,10 @@
   "scripts": {
     "dev": "vite build --watch",
     "start": "vite build && electron .",
+    "test": "node test/run.mjs",
+    "test:health-sync": "node test/health-sync.test.mjs",
+    "test:dead-exports": "node test/dead-exports.test.mjs",
+    "lint:exports": "node test/dead-exports.test.mjs",
     "dist": "cross-env ELECTRON_DIST=1 vite build && npm run dist:linux && npm run dist:win && npm run dist:mac",
     "dist:linux": "cross-env ELECTRON_DIST=1 vite build && electron-builder --linux deb rpm AppImage pacman --publish never",
     "dist:deb": "cross-env ELECTRON_DIST=1 vite build && electron-builder --linux deb --publish never",

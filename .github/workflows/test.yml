@@ -1,0 +1,62 @@
+name: Test
+
+# The source-health lists drifted for months because test/health-sync.test.mjs
+# only ran when someone remembered it by hand, and the app shipped with six
+# probe entries pointing at removed sources (commit 6ed204d). There was no
+# `npm test` script and no CI at all. This runs on every push and pull request
+# so the checks cannot rot again.
+#
+# Release builds stay in build.yml, which is dispatch-only and macOS-specific.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # Matches the engine floor in README (>=22.12.0); the tests parse
+          # source text and rely on modern RegExp/V8 behaviour.
+          node-version: 22
+          cache: npm
+
+      # The suites read src/, test/ and the root *.js entrypoints. None of them
+      # import a dependency, so a full `npm ci` would be wasted work here — but
+      # `npm ci` is cheap insurance that package.json and the lockfile agree,
+      # and a mismatch breaks every release build.
+      - name: Install deps
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Verify vite build compiles
+        # A green vite build means "the syntax is valid", nothing more: vite does
+        # not resolve identifiers in component scope, so a missing import (e.g. a
+        # React hook used but never imported) compiles cleanly and only throws when
+        # that component mounts. SettingsPage is lazy-loaded, so it never mounts
+        # in a Home-only smoke test. This step exists to catch the first half;
+        # the smoke test in scripts/smoke.mjs covers the rest.
+        run: npx cross-env ELECTRON_DIST=1 npx vite build
+
+      - name: Upload renderer bundle on failure
+        # Not a diagnostic on its own, but a silent vite failure with a stale
+        # dist/ is the documented cause of the black-window release (v2.8.0).
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-on-failure
+          path: dist/
+          retention-days: 3

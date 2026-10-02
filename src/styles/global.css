@@ -4524,6 +4524,16 @@ kbd {
     transition: opacity 0.2s;
 }
 
+/* Audio sits on its own row under the quality chips. Both rows are absolutely
+   positioned in the same corner, so the second one has to offset itself or the
+   two chip strips overlap and neither is clickable in the overlap. The offset
+   matches the chip height (11px font + 4px padding + 2px borders ≈ 23px) plus
+   the 4px gap. */
+.native-player__levels--audio {
+    top: 37px;
+    right: 10px;
+}
+
 .native-player:hover .native-player__levels {
     opacity: 1;
 }
