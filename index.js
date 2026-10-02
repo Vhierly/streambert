@@ -104,6 +104,7 @@ const hianimeIpc = require("./src/ipc/hianime");
 const playerIpc = require("./src/ipc/player");
 const discordRpc = require("./src/ipc/discordRpc");
 const sourceHealthIpc = require("./src/ipc/sourceHealth");
+const serverClientIpc = require("./src/ipc/serverClient");
 
 const BLOCKED_HOSTS = [
   "*://www.google-analytics.com/*",
@@ -801,6 +802,7 @@ playerIpc.register(getMainWindow, {
 blockStats.init(getMainWindow);
 discordRpc.register(ipcMain);
 sourceHealthIpc.register(getMainWindow);
+serverClientIpc.register();
 
 // ── Trakt.tv IPC handlers (main process — avoids CORS) ───────────────────────
 // All Trakt OAuth + API calls run here, tokens stay in renderer localStorage.
@@ -1035,31 +1037,15 @@ ipcMain.handle("get-builtin-addons", () => {
 });
 
 // ── Server client IPC handlers ──────────────────────────────────────────────
-ipcMain.handle("get-server-config", () => {
-  // Renderer handles this via serverClient.js
-  return null;
-});
-
-ipcMain.handle("set-server-config", (_, config) => {
-  // Renderer handles this via serverClient.js
-  return { ok: true };
-});
-
-ipcMain.handle("clear-server-config", () => {
-  // Renderer handles this via serverClient.js
-  return { ok: true };
-});
-
-ipcMain.handle("server-get-libraries", async () => {
-  // Would call Jellyfin/Plex API via main process
-  // For now, return empty (renderer handles via serverClient.js)
-  return [];
-});
-
-ipcMain.handle("server-get-items", async (_, libraryId) => {
-  // Would call Jellyfin/Plex API via main process
-  return [];
-});
+// Jellyfin / Plex. These were five stubs that returned [] or { ok: true } without
+// doing anything, while preload.js exposed a bridge to them and
+// src/utils/serverClient.js tried to reach the API from the renderer against
+// invented paths (`/jellyfin/…`, `/plex/…`) that no server serves — and behind
+// CORS regardless. The real implementation lives in src/ipc/serverClient.js.
+//
+// Requests go through electron.net from the main process, and the API key is
+// stored with safeStorage instead of localStorage: it grants full library access
+// and must not sit where renderer code can read it.
 
 // ── In-app update IPC handlers (moved to src/ipc/player.js) ────────────────
 // NOTE: detect-update-format, download-and-install-update, and cancel-update

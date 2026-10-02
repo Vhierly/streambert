@@ -146,15 +146,15 @@ const ALLOW = {
   saveDownloadQueue: "smart-download helper, read internally",
   healthySources: "source-health internals, read internally",
   isAnimeSource: "source-health internals, read internally",
-  jellyfinGetLibraries: "server lib layer, reached via serverGetLibraries",
-  jellyfinGetItems: "server lib layer, reached via serverGetItems",
-  plexGetLibraries: "server lib layer, reached via serverGetLibraries",
-  plexGetItems: "server lib layer, reached via serverGetItems",
   GITHUB_REPO: "updates internals, via checkForUpdatesWithFallback",
   CODEBERG_REPO: "updates internals, via checkForUpdatesWithFallback",
   normaliseVersion: "updates internals, via checkForUpdatesWithFallback",
   semverGt: "updates internals, via checkForUpdatesWithFallback",
   checkForUpdates: "updates internals, via checkForUpdatesWithFallback",
+  // Exported and deliberately returns null: server-library playback needs Plex
+  // transcoder sessions negotiated before a URL means anything. The server-client
+  // suite asserts it stays null rather than quietly building a leaky one.
+  serverGetStreamUrl: "playback from a server library is not implemented; asserted null by test/server-client.test.mjs",
   getAddons: "addon gallery, exercised via getAddonGallery",
   loadAddons: "addon loader, called from getAddonGallery",
 };
@@ -192,11 +192,15 @@ const KNOWN_DEAD = {
   // matchesQuality are the gates in src/utils/autoDownload.js, started from
   // App.jsx. canStartDownload stays: downloadQueue.canStartNow covers the
   // runtime gate and this one duplicates it with no caller.
-  // t7 — jellyfin/plex library browser
+  // t7 — jellyfin/plex: transport DONE (serverGetLibraries, serverGetItems,
+  // serverReportProgress all wired to the main-process IPC). These three remain
+  // because playback from a server library is a separate piece of work — Plex
+  // needs a transcode decision and a live transcoder session, Jellyfin needs its
+  // playlist through the loopback proxy. serverGetStreamUrl returns null on
+  // purpose rather than building a URL that leaks the API key into every log it
+  // passes through.
   "isServerConnected": 1,
   "jellyfinGetPlaybackInfo": 1,
-  "jellyfinReportProgress": 1,
-  "serverGetStreamUrl": 1,
   // t8 — ai recommendations reach the home page
   "getSimilarRecommendations": 1,
   "getBecauseYouWatched": 1,
