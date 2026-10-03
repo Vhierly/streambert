@@ -7,6 +7,7 @@ import { useRatings, getRatingForItem } from "../utils/useRatings";
 import { isRestricted } from "../utils/ageRating";
 import { storage } from "../utils/storage";
 import { loadHomeLayout, loadHomeViewMode } from "../utils/homeLayout";
+import { buildTasteProfile } from "../utils/taste";
 
 /**
  * Extract up to `count` unique, recently watched items from the user's
@@ -50,6 +51,10 @@ export default function HomePage({
   const hero = trending[0];
 
   const [recommendedItems, setRecommendedItems] = useState([]);
+  // Which title the recommendations row is attributed to. Null when there is no
+  // usable history entry, in which case the row renders without a subtitle
+  // rather than claiming one.
+  const [tasteInfo, setTasteInfo] = useState(null);
   const [topRatedItems, setTopRatedItems] = useState([]);
 
   // Load layout config (order + visibility) once on mount
@@ -101,7 +106,21 @@ export default function HomePage({
   useEffect(() => {
     if (!apiKey || offline || !history || history.length === 0) return;
     const sources = getRecentHistoryItems(history, 5);
-    if (sources.length === 0) return;
+
+    // Taste drives the row: which genres this history actually points at, and
+    // which title the row is attributed to. Both are decided in utils/taste.js;
+    // the fetching stays here because this effect already owns the
+    // AbortController, the dedupe and the interleaving.
+    //
+    // analyzeWatchHistory existed in aiRecommendations.js and had no callers, so
+    // ten thrillers and twenty comedies produced the same row.
+    const taste = buildTasteProfile(history, 3);
+    setTasteInfo(taste.basedOn);
+
+    // With no history there is nothing to be tastey about, and the similarity
+    // path below is the right floor: a fresh install should still get a row
+    // rather than an empty home page.
+    if (sources.length === 0 && !taste.discoverQuery) return;
 
     const controller = new AbortController();
 
@@ -131,6 +150,21 @@ export default function HomePage({
         })
         .catch(() => []);
     });
+
+    // A genre-discover pass, built from the taste profile. Spread last so the
+    // per-title recommendations lead the interleaving: those are the specific,
+    // explainable picks, and taste is the broader backfill behind them.
+    if (taste.discoverQuery) {
+      fetches.push(
+        tmdbFetch(taste.discoverQuery, apiKey, {
+          signal: controller.signal,
+        })
+          .then((d) =>
+            (d.results || []).map((i) => ({ ...i, media_type: "movie" })),
+          )
+          .catch(() => []),
+      );
+    }
 
     Promise.all(fetches)
       .then((arrays) => {
@@ -374,6 +408,7 @@ export default function HomePage({
               key="recommended"
               items={filteredRecommendedItems}
               title="Recommended for You"
+              subtitle={tasteInfo?.note}
               onSelect={onSelect}
               ratingsMap={enrichedRatingsMap}
             />

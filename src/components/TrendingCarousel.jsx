@@ -152,6 +152,10 @@ export default function TrendingCarousel({
   onSelect,
   title,
   titleHighlight,
+  // Optional line under the section title. The recommendations row uses it to
+  // say which title the picks came from, so the row is explainable rather than
+  // just a shelf of films.
+  subtitle,
   ratingsMap = {},
 }) {
   const count = items.length;
@@ -381,6 +385,8 @@ export default function TrendingCarousel({
           title
         )}
       </div>
+
+      {subtitle && <div className="section-subtitle">{subtitle}</div>}
 
       <div
         className="carousel-wrapper"

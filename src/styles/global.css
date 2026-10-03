@@ -4625,6 +4625,15 @@ kbd {
     opacity: 1;
 }
 
+/* Line under a section title — currently only the recommendations row, which
+   says which title the picks came from. */
+.section-subtitle {
+    font-size: 12px;
+    color: var(--text3);
+    margin-top: -4px;
+    margin-bottom: 10px;
+}
+
 .native-player__error {
     position: absolute;
     inset: 0;
