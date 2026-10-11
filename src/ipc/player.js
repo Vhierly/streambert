@@ -230,7 +230,7 @@ function register(getMainWindow, { writeSecretMigration }) {
 
   // ── Get video duration via ffprobe ────────────────────────────────────────
   ipcMain.handle("get-video-duration", async (_, filePath) => {
-    if (!filePath) return { ok: false };
+    if (!filePath || typeof filePath !== "string") return { ok: false };
     const platform = process.platform;
 
     // Probe paths for ffprobe
@@ -240,6 +240,13 @@ function register(getMainWindow, { writeSecretMigration }) {
         : platform === "darwin"
           ? ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "ffprobe"]
           : ["/usr/bin/ffprobe", "/usr/local/bin/ffprobe", "ffprobe"];
+
+    // Validate filePath exists and is a file before probing
+    try {
+      if (!fs.statSync(filePath).isFile()) return { ok: false };
+    } catch {
+      return { ok: false };
+    }
 
     for (const probe of probePaths) {
       try {

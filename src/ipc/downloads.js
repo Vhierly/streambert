@@ -61,7 +61,7 @@ function loadDownloads() {
 function saveDownloads() {
   try {
     const toSave = downloads.filter(
-      (d) => d.status !== "downloading" && d.status !== "error",
+      (d) => d.status !== "downloading",
     );
     fs.writeFileSync(downloadsFile(), JSON.stringify(toSave, null, 2));
   } catch {}
@@ -241,6 +241,7 @@ function register(getMainWindow) {
         if (!binaryPath) {
           return { ok: false, error: "Invalid or unknown downloader token" };
         }
+        trustedBinaryPaths.delete(token);
         const id = crypto.randomUUID();
         const logPath = path.join(os.tmpdir(), `streambert_dl_${id}.log`);
 
@@ -728,9 +729,14 @@ function register(getMainWindow) {
         } catch {}
         activeProcs.delete(id);
       }
-      if (filePath) {
+      // Validate filePath is within a known download path before deleting
+      if (filePath && dlEntry) {
         try {
-          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+          const resolvedFp = path.resolve(filePath);
+          const resolvedDl = path.resolve(dlEntry.downloadPath || "");
+          if (resolvedDl && (resolvedFp === resolvedDl || resolvedFp.startsWith(resolvedDl + path.sep))) {
+            if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+          }
         } catch {}
       }
       for (const sp of dlEntry?.subtitlePaths || []) {
@@ -792,12 +798,13 @@ function register(getMainWindow) {
   });
 
   ipcMain.handle("show-in-folder", (_, filePath) => {
-    if (filePath && fs.existsSync(filePath)) shell.showItemInFolder(filePath);
-    else shell.openPath(path.dirname(filePath || ""));
+    if (filePath && typeof filePath === "string" && fs.existsSync(filePath))
+      shell.showItemInFolder(filePath);
   });
 
   ipcMain.handle("file-exists", (_, filePath) => {
     try {
+      if (!filePath || typeof filePath !== "string") return false;
       return fs.existsSync(filePath);
     } catch {
       return false;
@@ -823,8 +830,7 @@ function register(getMainWindow) {
     } catch {}
   });
   ipcMain.handle("open-path", (_, filePath) => {
-    // If the path points to a file (e.g. an .asar archive or an executable),
-    // open its containing folder instead so the OS file manager actually shows something
+    if (!filePath || typeof filePath !== "string") return;
     try {
       const stat = fs.statSync(filePath);
       if (stat.isDirectory()) {
@@ -833,8 +839,7 @@ function register(getMainWindow) {
         shell.showItemInFolder(filePath);
       }
     } catch {
-      // Path doesn't exist or stat failed
-      shell.openPath(filePath);
+      // Path doesn't exist or stat failed — do nothing
     }
   });
   ipcMain.handle("get-install-path", () => {

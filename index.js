@@ -287,6 +287,7 @@ function createWindow() {
 
   // Intercept close if downloads are active
   let closeResponsePending = false;
+  let closeResponseTimer = null;
   mainWindow.on("close", (e) => {
     const running = downloadsIpc
       .getDownloads()
@@ -296,9 +297,18 @@ function createWindow() {
     if (closeResponsePending) return;
     closeResponsePending = true;
     mainWindow.webContents.send("confirm-close", { count: running.length });
+    // Auto-force-close if renderer never responds (e.g. crashed)
+    closeResponseTimer = setTimeout(() => {
+      closeResponseTimer = null;
+      if (closeResponsePending && mainWindow && !mainWindow.isDestroyed()) {
+        downloadsIpc.killAllDownloads();
+        mainWindow.destroy();
+      }
+    }, 10000);
   });
 
   ipcMain.on("close-response", (_, confirmed) => {
+    if (closeResponseTimer) { clearTimeout(closeResponseTimer); closeResponseTimer = null; }
     closeResponsePending = false;
     if (confirmed) {
       downloadsIpc.killAllDownloads();
@@ -390,7 +400,15 @@ let pipWindow = null;
 const getPipWindow = () => pipWindow;
 
 ipcMain.handle("open-pip-window", (_, { url, title }) => {
-  if (!url || url === "about:blank") return { ok: false, reason: "no-url" };
+  if (!url || typeof url !== "string" || url === "about:blank") return { ok: false, reason: "no-url" };
+  // Only allow http/https URLs in the pop-out window
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      return { ok: false, reason: "invalid-url" };
+  } catch {
+    return { ok: false, reason: "invalid-url" };
+  }
 
   // Guarantee tracker/ad blocking is active in persist:player before any load
   if (!sessionsConfigured) {
