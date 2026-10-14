@@ -84,6 +84,12 @@ export function analyzeWatchHistory(history) {
   const dayCounts = {};
   
   for (const item of history) {
+    // A null/undefined *entry* is JSON-representable, so a corrupted
+    // streambert_history string can produce one on its own — and every read
+    // below is on item.*, so one bad entry throws and blanks the home screen
+    // behind ErrorBoundary. Same guard style as taste.js pickBecauseYouWatched.
+    if (!item) continue;
+
     // Genre analysis
     for (const genre of item.genres || []) {
       const id = genre.id || genre;

@@ -420,6 +420,12 @@ const watched = (id, genres, extra = {}) => ({
 // ErrorBoundary and renders the full-screen "SOMETHING WENT WRONG" panel with
 // no route back, because Try Again only clears hasError and the effect throws
 // again immediately. One partial write bricks the home screen permanently.
+//
+// TES-86. The same loop read item.genres and item.vote_average with no entry
+// guard, so a null/undefined *entry* threw TypeError from the same function.
+// That input class is wider than FIX-4's: a bad watchedAt is not
+// JSON-representable and needed an app-level partial write, but [null] survives
+// JSON.parse, so a corrupted streambert_history string alone is enough.
 {
   const cases = [
     [{ id: 1, title: "x", media_type: "movie" }],
@@ -429,10 +435,16 @@ const watched = (id, genres, extra = {}) => ({
       { id: 1, title: "ok", media_type: "movie", watchedAt: "2024-06-01T00:00:00Z" },
       { id: 2, title: "bad", media_type: "movie" },
     ],
+    // TES-86: the entry itself is missing, not a field on it.
+    [null],
+    [undefined],
+    [
+      { id: 1, title: "ok", media_type: "movie", watchedAt: "2024-06-01T00:00:00Z" },
+      null,
+    ],
+    // Exactly what a corrupted streambert_history string yields.
+    JSON.parse("[null]"),
   ];
-  // NOTE: a null/undefined *entry* (not a bad watchedAt) also throws here, at
-  // `item.genres` and `item.vote_average` in analyzeWatchHistory — a separate
-  // unguarded read, outside FIX-4's scope. Reported on TES-82, not fixed.
 
   for (const history of cases) {
     checks++;
@@ -454,6 +466,28 @@ const watched = (id, genres, extra = {}) => ({
     mod.buildTasteProfile([{ id: 1, title: "x", media_type: "movie" }], 3);
   } catch (e) {
     problems.push(`buildTasteProfile threw on an entry with no watchedAt: ${e.message}`);
+  }
+
+  // TES-86: the page's own entry point, with a null entry next to a usable one.
+  // The good entry must still produce a profile rather than being lost with the
+  // bad one — skipping the entry is the fix, skipping the history is not.
+  checks++;
+  try {
+    const profile = mod.buildTasteProfile(
+      [
+        { id: 1, title: "ok", media_type: "movie", watchedAt: new Date().toISOString(), genres: [{ id: 53 }, { id: 53 }], vote_average: 8 },
+        null,
+      ],
+      3,
+    );
+    if (profile.basedOn?.id !== 1) {
+      problems.push("a null entry cost the profile its usable attribution");
+    }
+    if (profile.watchStreak !== 1) {
+      problems.push(`a null entry broke the streak: ${profile.watchStreak}`);
+    }
+  } catch (e) {
+    problems.push(`buildTasteProfile threw on a null entry: ${e.constructor.name}: ${e.message}`);
   }
 
   // A good entry next to a bad one still counts toward the streak. Wrapped
