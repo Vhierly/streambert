@@ -82,6 +82,17 @@ for (const f of FILES) {
   patched[f] = p;
 }
 
+// Cleanup runs on every exit path, including an uncaught throw. A leaked patch
+// file makes dead-exports.test.mjs fail on an otherwise clean tree, which is a
+// false failure and wastes the next person's time.
+process.on("exit", () => {
+  for (const p of Object.values(patched)) {
+    try {
+      unlinkSync(join(root, "src/utils", p));
+    } catch {}
+  }
+});
+
 const mod = await import(
   pathToFileURL(join(root, "src/utils", patched["taste.js"])).href
 );
@@ -99,6 +110,9 @@ const ok = (cond, msg) => {
   if (!cond) problems.push(msg);
 };
 
+// The shape App.jsx addHistory writes. genres and vote_average are there since
+// FIX-2; before that the app stored neither, so the fixture was testing a
+// history entry no user could produce.
 const watched = (id, genres, extra = {}) => ({
   id,
   title: `Title ${id}`,
@@ -306,6 +320,57 @@ const watched = (id, genres, extra = {}) => ({
   }
 }
 
+// ── 8b. The shape App.jsx writes yields a real discover query ───────────────
+// FIX-2. App.jsx addHistory never persisted `genres`, so pickTasteGenres saw
+// zero genres, counts stayed empty, and buildTasteProfile returned
+// discoverQuery: null for every user — commit 7ce6e90 shipped a no-op.
+// These entries are built exactly the way the new App.jsx entry is: the fields
+// a detail page hands to onHistory, and no others.
+{
+  const fromApp = (id, genres, rating) => ({
+    id,
+    title: `Title ${id}`,
+    poster_path: null,
+    media_type: "movie",
+    watchedAt: new Date().toISOString(),
+    genres: genres.map((g) => ({ id: g })),
+    vote_average: rating,
+    season: null,
+    episode: null,
+    episodeName: null,
+  });
+
+  const history = [
+    fromApp(1, [53, 28], 8.1),
+    fromApp(2, [53, 28], 7.4),
+    fromApp(3, [53, 28], 9.0),
+    fromApp(4, [35], 6.0),
+    fromApp(5, [35], 5.5),
+  ];
+
+  const profile = mod.buildTasteProfile(history, 3);
+  ok(
+    profile.discoverQuery !== null,
+    "the shape App.jsx now writes still produced no discover query",
+  );
+  ok(
+    typeof profile.discoverQuery === "string" &&
+      profile.discoverQuery.includes("with_genres="),
+    `discoverQuery is malformed: ${profile.discoverQuery}`,
+  );
+  ok(profile.genres.includes(53), `thriller missing from the profile: ${profile.genres.join(",")}`);
+  ok(profile.basedOn?.id === 1 || profile.basedOn !== null, "no attribution produced");
+
+  // The regression itself: strip the two fields App.jsx used to omit and the
+  // query must go back to null. If this still passes after removing them, the
+  // assertion above is not testing what it claims.
+  const stripped = history.map(({ genres, vote_average, ...rest }) => rest);
+  ok(
+    mod.buildTasteProfile(stripped, 3).discoverQuery === null,
+    "a history with no genres produced a query — the fixture is not exercising FIX-2",
+  );
+}
+
 // ── 9. The row is actually driven by this ────────────────────────────────────
 // Everything above is policy. If HomePage never calls it, the analysis runs in a
 // test and nowhere else — the original failure, in a new file.
@@ -326,6 +391,19 @@ const watched = (id, genres, extra = {}) => ({
   if (!home.includes("subtitle={tasteInfo")) {
     problems.push("HomePage never renders the attribution — the row stays unexplainable");
   }
+  // And the history entry App.jsx builds must carry the fields taste.js reads.
+  // FIX-2 was exactly this: the fields never left the detail page, so every
+  // genre assertion above was passing on a shape the app never wrote.
+  const app = readFileSync(join(root, "src/App.jsx"), "utf8");
+  checks++;
+  if (!/genres:\s*item\.genres/.test(app)) {
+    problems.push("App.jsx addHistory no longer persists genres — the taste row is a no-op again");
+  }
+  checks++;
+  if (!/vote_average:\s*item\.vote_average/.test(app)) {
+    problems.push("App.jsx addHistory no longer persists vote_average — rating weighting is dead");
+  }
+
   // And the old similarity-only path must still work when there is no history:
   // a fresh install should get a row, not an empty home page.
   checks++;

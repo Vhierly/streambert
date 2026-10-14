@@ -875,6 +875,12 @@ export default function App() {
       poster_path: item.poster_path,
       media_type: getMediaType(item),
       watchedAt: Date.now(),
+      // Both detail pages already carry these on the object they hand to
+      // onHistory (MoviePage/TVPage build `displayGenres` from d.genres or
+      // anilistData.genres), so there is no fetch here. Without them
+      // pickTasteGenres sees zero genres and the taste row is a no-op.
+      genres: item.genres || [],
+      vote_average: item.vote_average ?? null,
       // Store as numbers so the progress key always matches exactly
       season: item.season != null ? Number(item.season) : null,
       episode: item.episode != null ? Number(item.episode) : null,
