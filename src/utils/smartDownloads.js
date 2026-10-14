@@ -112,8 +112,12 @@ export function shouldAutoDownload(animeEntry, settings, followList) {
   // Only auto-download if following this show
   const isFollowing = followList?.some((f) => f.id === animeEntry.id);
   if (!isFollowing) return false;
-  // Only if new episode is out (Airing status)
-  return animeEntry.status === "Airing";
+  // No airing check here. Saved entries carry {id, title, poster_path,
+  // media_type, vote_average, year} — never a `status` — so a status gate is
+  // false for every real entry. Airing is already answered one layer up: the
+  // provider returns only episodes with an air_date and selectEpisodesToQueue
+  // rejects un-aired ones via airedAt/aired.
+  return true;
 }
 
 // ── Quality Matching ──────────────────────────────────────────────────────────
