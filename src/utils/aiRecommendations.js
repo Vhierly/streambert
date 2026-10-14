@@ -128,10 +128,20 @@ export function analyzeWatchHistory(history) {
 function calculateWatchStreak(history) {
   if (!history || history.length === 0) return 0;
   
-  // Get unique dates
-  const dates = new Set(
-    history.map((h) => new Date(h.watchedAt).toISOString().slice(0, 10))
-  );
+  // Get unique dates.
+  //
+  // An entry with a missing or unparseable watchedAt must be skipped, not fed
+  // to toISOString(): new Date(undefined).toISOString() throws RangeError, and
+  // this runs outside any try/catch on the home page's live path, so one
+  // corrupted history entry blanks the whole app behind the ErrorBoundary.
+  // Same guard style as taste.js pickBecauseYouWatched.
+  const dates = new Set();
+  for (const h of history) {
+    if (!h?.watchedAt) continue;
+    const t = new Date(h.watchedAt).getTime();
+    if (!Number.isFinite(t)) continue;
+    dates.add(new Date(t).toISOString().slice(0, 10));
+  }
   
   // Sort dates descending
   const sortedDates = Array.from(dates).sort().reverse();

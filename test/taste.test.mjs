@@ -412,6 +412,69 @@ const watched = (id, genres, extra = {}) => ({
   }
 }
 
+// ── 10. One corrupted history entry does not blank the app ───────────────────
+// FIX-4. calculateWatchStreak mapped every entry through
+// new Date(h.watchedAt).toISOString() with no guard. new Date(undefined)
+// .toISOString() throws RangeError: Invalid time value, and analyzeWatchHistory
+// is called from HomePage's effect outside any try/catch — the throw reaches
+// ErrorBoundary and renders the full-screen "SOMETHING WENT WRONG" panel with
+// no route back, because Try Again only clears hasError and the effect throws
+// again immediately. One partial write bricks the home screen permanently.
+{
+  const cases = [
+    [{ id: 1, title: "x", media_type: "movie" }],
+    [{ id: 1, title: "x", media_type: "movie", watchedAt: null }],
+    [{ id: 1, title: "x", media_type: "movie", watchedAt: "not a date" }],
+    [
+      { id: 1, title: "ok", media_type: "movie", watchedAt: "2024-06-01T00:00:00Z" },
+      { id: 2, title: "bad", media_type: "movie" },
+    ],
+  ];
+  // NOTE: a null/undefined *entry* (not a bad watchedAt) also throws here, at
+  // `item.genres` and `item.vote_average` in analyzeWatchHistory — a separate
+  // unguarded read, outside FIX-4's scope. Reported on TES-82, not fixed.
+
+  for (const history of cases) {
+    checks++;
+    try {
+      const analysis = aiMod.analyzeWatchHistory(history);
+      if (typeof analysis.watchStreak !== "number") {
+        problems.push(`watchStreak is not a number for ${JSON.stringify(history)}`);
+      }
+    } catch (e) {
+      problems.push(
+        `analyzeWatchHistory threw on ${JSON.stringify(history)}: ${e.constructor.name}: ${e.message}`,
+      );
+    }
+  }
+
+  // The exact call HomePage makes, which is the one that reached the boundary.
+  checks++;
+  try {
+    mod.buildTasteProfile([{ id: 1, title: "x", media_type: "movie" }], 3);
+  } catch (e) {
+    problems.push(`buildTasteProfile threw on an entry with no watchedAt: ${e.message}`);
+  }
+
+  // A good entry next to a bad one still counts toward the streak. Wrapped
+  // because the pre-fix code throws here, and an uncaught throw skips the
+  // patched-file cleanup at the bottom of this file — leaving stray
+  // src/utils/.<name>.<stamp>.js files behind, which then make
+  // dead-exports.test.mjs fail on a tree that is otherwise fine.
+  checks++;
+  try {
+    const mixed = aiMod.analyzeWatchHistory([
+      { id: 1, watchedAt: new Date().toISOString() },
+      { id: 2 },
+    ]);
+    if (mixed.watchStreak !== 1) {
+      problems.push(`a corrupt entry broke the streak of a valid one: ${mixed.watchStreak}`);
+    }
+  } catch (e) {
+    problems.push(`a corrupt entry broke a valid streak: ${e.constructor.name}: ${e.message}`);
+  }
+}
+
 // ── Report ──────────────────────────────────────────────────────────────────
 for (const p of Object.values(patched)) {
   try {
