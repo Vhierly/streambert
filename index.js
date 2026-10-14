@@ -750,7 +750,7 @@ function createWindow() {
     );
   });
 
-  mainWindow.loadFile(path.join(__dirname, "dist/index.html"));
+  mainWindow.loadFile(path.join(__dirname, "dist/renderer/index.html"));
 
   // Trigger scheduled backup after load
   mainWindow.webContents.once("did-finish-load", () => {

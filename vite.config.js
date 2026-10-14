@@ -7,6 +7,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     base: "./",
     build: {
+      outDir: "dist/renderer",
       minify: "terser",
       terserOptions: {
         compress: {
