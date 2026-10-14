@@ -347,6 +347,11 @@ function reset() {
 }
 
 // ── 7. The schedule window gates new work ───────────────────────────────────
+// FIX-3. The old assertion was `includes("outside-schedule") || queued > 0`,
+// which an always-true result satisfied — and always-true is exactly what the
+// bug produced: the caller passed `new Date()` as the first argument of a
+// one-parameter function, so `settings` was the Date, scheduleEnabled was
+// undefined, and the gate returned true unconditionally.
 {
   reset();
   // A window that cannot contain the current hour, so the scan is outside it.
@@ -361,8 +366,54 @@ function reset() {
     force: true,
   });
   ok(
-    outside.reasons.includes("outside-schedule") || outside.queued > 0,
-    `outside the schedule window the scan neither skipped nor queued: ${outside.reasons.join(",")}`,
+    outside.reasons.includes("outside-schedule") && outside.queued === 0,
+    `outside the window the scan reported "${outside.reasons.join(",")}" and queued ${outside.queued}`,
+  );
+
+  // And a window that does contain the current hour must let the scan through,
+  // so this is a real gate rather than a blanket "no".
+  configure({
+    scheduleEnabled: true,
+    scheduleStartHour: (hour + 23) % 24,
+    scheduleEndHour: (hour + 2) % 24,
+  });
+  const inside = await auto.scanForNewEpisodes({
+    listEpisodes: async () => [episode(1)],
+    force: true,
+  });
+  ok(inside.queued === 1, `inside the window the scan queued ${inside.queued}, expected 1`);
+
+  // Disabled window: the gate is skipped entirely.
+  configure({ scheduleEnabled: false });
+  ok(
+    smart.isWithinSchedule(new Date(2026, 0, 5, 3), { scheduleEnabled: false }) === true,
+    "a disabled window still blocked",
+  );
+
+  // The signature takes the clock, so the outcome is assertable without mocking
+  // Date. A plain window.
+  const day = { scheduleEnabled: true, scheduleStartHour: 2, scheduleEndHour: 6 };
+  ok(
+    smart.isWithinSchedule(new Date(2026, 0, 5, 4), day) === true,
+    "04:00 inside a 02:00-06:00 window was rejected",
+  );
+  ok(
+    smart.isWithinSchedule(new Date(2026, 0, 5, 7), day) === false,
+    "07:00 outside a 02:00-06:00 window was allowed",
+  );
+  // A window that wraps midnight.
+  const night = { scheduleEnabled: true, scheduleStartHour: 22, scheduleEndHour: 6 };
+  ok(
+    smart.isWithinSchedule(new Date(2026, 0, 5, 23), night) === true,
+    "23:00 inside a 22:00-06:00 window was rejected",
+  );
+  ok(
+    smart.isWithinSchedule(new Date(2026, 0, 5, 3), night) === true,
+    "03:00 inside a 22:00-06:00 window was rejected",
+  );
+  ok(
+    smart.isWithinSchedule(new Date(2026, 0, 5, 12), night) === false,
+    "12:00 outside a 22:00-06:00 window was allowed",
   );
 }
 

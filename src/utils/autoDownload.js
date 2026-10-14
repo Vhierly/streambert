@@ -187,7 +187,7 @@ export async function scanForNewEpisodes({ listEpisodes, force = false } = {}) {
   // The schedule window is a second gate, separate from the interval: outside
   // it, no new work is started at all. Downloads already running are the
   // queue's business, not this module's.
-  if (settings.scheduleEnabled && !isWithinSchedule(new Date(), settings)) {
+  if (settings.scheduleEnabled && !isWithinSchedule(new Date(now), settings)) {
     result.reasons.push("outside-schedule");
     return result;
   }

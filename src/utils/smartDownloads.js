@@ -93,10 +93,12 @@ export function updateQueueItem(id, updates) {
 }
 
 // ── Schedule Check ────────────────────────────────────────────────────────────
-export function isWithinSchedule(settings) {
-  if (!settings.scheduleEnabled) return true;
-  const now = new Date();
-  const hour = now.getHours();
+// `now` is a parameter rather than an ambient new Date(): the caller already
+// knows the time, and reading the clock in here made the window impossible to
+// assert without mocking Date.
+export function isWithinSchedule(now, settings) {
+  if (!settings?.scheduleEnabled) return true;
+  const hour = (now instanceof Date ? now : new Date()).getHours();
   const { scheduleStartHour, scheduleEndHour } = settings;
   if (scheduleStartHour <= scheduleEndHour) {
     return hour >= scheduleStartHour && hour < scheduleEndHour;
