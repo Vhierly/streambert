@@ -89,7 +89,11 @@ const ok = (cond, msg) => {
   if (!cond) problems.push(msg);
 };
 
-const SHOW = { id: 1399, title: "Example Show", media_type: "tv", status: "Airing" };
+// The shape App.jsx toggleSave actually writes: {id, title, poster_path,
+// media_type, vote_average, year}. No `status` — the old fixture carried
+// `status: "Airing"`, which is the same wrong assumption the code made, so the
+// suite passed while every real user was skipped.
+const SHOW = { id: 1399, title: "Example Show", media_type: "tv" };
 
 function episode(n, over = {}) {
   return {
@@ -124,8 +128,12 @@ function configure({ enabled = true, ...rest } = {}) {
 // assertions were quietly testing an empty library.
 const STORAGE_PREFIX = "streambert_";
 
+// App.jsx keeps SAVED as an object keyed `${media_type}_${id}`, not an array.
+// The old fixture wrote an array, which is the second half of why FIX-1 hid.
 function follow(shows) {
-  localStorage.setItem(STORAGE_PREFIX + "saved", JSON.stringify(shows));
+  const saved = {};
+  for (const s of shows) saved[`${s.media_type}_${s.id}`] = s;
+  localStorage.setItem(STORAGE_PREFIX + "saved", JSON.stringify(saved));
 }
 
 function reset() {
@@ -177,6 +185,64 @@ function reset() {
   );
 }
 
+// ── 1b. The saved store is read in the shape App.jsx writes it ──────────────
+// FIX-1. followingShows() gated on Array.isArray, but App.jsx keeps SAVED as an
+// object keyed `${media_type}_${id}`. This block fails on the pre-fix code: the
+// object is read as an empty library, so nothing is ever picked.
+{
+  reset();
+  const settings = smart.getSmartDownloadSettings();
+
+  // A real-shaped saved entry — no `status`, exactly what toggleSave writes.
+  const real = {
+    id: 1399,
+    title: "Example Show",
+    poster_path: "/p.jpg",
+    media_type: "tv",
+    vote_average: 7.5,
+    year: "2011",
+  };
+  follow([real]);
+
+  const stored = JSON.parse(localStorage.getItem(STORAGE_PREFIX + "saved"));
+  ok(
+    !Array.isArray(stored) && typeof stored === "object",
+    "the fixture must write an object, the way App.jsx does",
+  );
+
+  const picked = auto.selectEpisodesToQueue(real, [episode(1)], settings);
+  ok(
+    picked.length === 1,
+    `a real-shaped saved show was not followed: picked ${picked.length}`,
+  );
+
+  const scan = await auto.scanForNewEpisodes({
+    listEpisodes: async () => [episode(1)],
+    force: true,
+  });
+  ok(scan.queued === 1, `a real-shaped saved show queued ${scan.queued}, expected 1`);
+
+  // An empty object is an empty library, not an error.
+  follow([]);
+  ok(
+    auto.selectEpisodesToQueue(real, [episode(1)], settings).length === 0,
+    "an empty saved store still produced queue entries",
+  );
+
+  // A non-object, non-array value must yield [] rather than throw or leak.
+  for (const junk of ["nope", 42, true]) {
+    localStorage.setItem(STORAGE_PREFIX + "saved", JSON.stringify(junk));
+    const r = await auto.scanForNewEpisodes({
+      listEpisodes: async () => [episode(1)],
+      force: true,
+    });
+    ok(
+      r.queued === 0 && r.reasons.includes("nothing-following"),
+      `saved=${JSON.stringify(junk)} produced "${r.reasons.join(",")}"`,
+    );
+  }
+}
+
 // ── 2. Un-aired episodes are not queued ─────────────────────────────────────
 // Providers report upcoming episodes. Queueing one produces a download that
 // cannot succeed, and an error the user cannot act on.
@@ -213,16 +279,19 @@ function reset() {
   reset();
   const settings = smart.getSmartDownloadSettings();
   const [item] = auto.selectEpisodesToQueue(SHOW, [episode(5)], settings);
+  // Guarded rather than asserted: when a fix is reverted to prove the test
+  // fails, `item` is undefined and an unguarded read would crash the process
+  // with a TypeError instead of reporting which assertion broke.
   ok(!!item, "no item produced");
-  ok(item.mediaType === "tv", `mediaType wrong: ${item.mediaType}`);
-  ok(item.tmdbId === SHOW.id, `tmdbId not carried: ${item.tmdbId}`);
-  ok(item.season === 1 && item.episode === 5, `season/episode wrong: ${item.season}/${item.episode}`);
+  ok(item?.mediaType === "tv", `mediaType wrong: ${item?.mediaType}`);
+  ok(item?.tmdbId === SHOW.id, `tmdbId not carried: ${item?.tmdbId}`);
+  ok(item?.season === 1 && item?.episode === 5, `season/episode wrong: ${item?.season}/${item?.episode}`);
   ok(
-    typeof item.m3u8Url === "string" && item.m3u8Url.startsWith("https://"),
-    `m3u8Url wrong: ${item.m3u8Url}`,
+    typeof item?.m3u8Url === "string" && item.m3u8Url.startsWith("https://"),
+    `m3u8Url wrong: ${item?.m3u8Url}`,
   );
   // Lowercase key: the stream resolver reads it exactly like this.
-  ok(item.m3u8Url === item.m3u8Url.toLowerCase(), "m3u8Url is not lowercase");
+  ok(item?.m3u8Url === item?.m3u8Url?.toLowerCase(), "m3u8Url is not lowercase");
 }
 
 // ── 5. Duplicates are not queued twice ──────────────────────────────────────
@@ -311,7 +380,7 @@ function reset() {
 // ── 9. A provider that throws does not abandon the scan ─────────────────────
 {
   reset();
-  const other = { id: 1400, title: "Second Show", media_type: "tv", status: "Airing" };
+  const other = { id: 1400, title: "Second Show", media_type: "tv" };
   follow([SHOW, other]);
 
   let calls = 0;

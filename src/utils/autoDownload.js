@@ -62,11 +62,20 @@ let _lastScanAt = 0;
 let _running = false;
 let _listEpisodes = null;
 
-/** Saved shows, in the shape shouldAutoDownload expects. */
+/**
+ * Saved shows, in the shape shouldAutoDownload expects.
+ *
+ * App.jsx stores SAVED as an object keyed `${media_type}_${id}` (App.jsx:77
+ * initialises it as `{}`, toggleSave writes the object). An Array.isArray check
+ * here returned [] for every real user, so nothing was ever followed and
+ * auto-download could not queue anything. The array branch is kept because a
+ * hand-migrated store may still hold one.
+ */
 function followingShows() {
   try {
     const saved = storage.get(STORAGE_KEYS.SAVED) || [];
-    return Array.isArray(saved) ? saved : [];
+    if (Array.isArray(saved)) return saved;
+    return saved && typeof saved === "object" ? Object.values(saved) : [];
   } catch {
     return [];
   }
