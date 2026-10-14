@@ -36,6 +36,35 @@ A cross-platform Electron Desktop App to stream and download any Movie, TV Serie
 ---
 [![Stargazers](https://reporoster.com/stars/dark/truelockmc/streambert)](https://github.com/truelockmc/streambert/stargazers)
 ---
+
+## Recent Fixes
+
+This fork carries nine commits on top of upstream `ea19a33`, all on `main` (head `4c28418`, version 2.9.0). They fix defects found in a bug audit of the auto-download and home-page paths:
+
+| Commit | Fix |
+| --- | --- |
+| `7ce6e90` | `feat(home)`: the recommendations row reads your watch taste |
+| `246623f` | `fix(autodownload)`: read the saved store in the shape `App.jsx` writes (an Object, not an Array) |
+| `8607806` | `fix(autodownload)`: drop the status gate no saved entry could satisfy |
+| `febf4c9` | `fix(home)`: persist `genres` and `vote_average` in the history entry |
+| `2b64e7d` | `fix(autodownload)`: pass the clock into `isWithinSchedule` |
+| `d8c53e6` | `fix(home)`: skip history entries whose `watchedAt` does not parse |
+| `659b0f4` | `fix(home)`: skip null/undefined history entries in `analyzeWatchHistory` |
+| `1abbdff` | `fix(home)`: count only valid watches, guard the last null-entry reads |
+| `4c28418` | `test`: add `update-check.test.mjs` |
+
+What those bugs looked like to a user:
+
+- **Auto-download silently did nothing.** The saved store was read in the wrong shape, the status gate could never be satisfied, and the clock was never passed to the schedule check.
+- **The home page could blank out entirely** on a corrupt or partial history entry (a null dereference).
+- **`totalWatched` overcounted** — it counted entries that were not valid watches.
+- **Recommendations degraded over time**, because history entries lost their `genres` and `vote_average`.
+- **An unparseable `watchedAt` was treated as valid**, so a malformed timestamp counted as a real watch.
+
+Verification: each fix was independently reproduced before and after the change by QA. `npm test` (`node test/run.mjs`) runs 10 suites and passes. CI runs the same suite on every push ([`test.yml`](.github/workflows/test.yml)).
+
+---
+
 ## Streaming
 The Application mainly gets Video Streams from VidSrc (you can also Stream from videasy and vidking). <br></br>
 It fetches Information for Images, Info Texts, Search and Homepage from [tmdb](https://www.themoviedb.org/).
@@ -93,37 +122,27 @@ Download the latest `Streambert-*-universal.dmg` from the [Releases](https://cod
 ```bash
 npm install
 ```
-2. Build
+2. Build for your target:
+
+| Target | Command | Host requirement |
+| --- | --- | --- |
+| Windows (NSIS) | `npm run dist:win` | Linux (needs `wine`) or Windows |
+| Linux (`.deb`) | `npm run dist:deb` | Linux |
+| Linux (`.rpm`) | `npm run dist:rpm` | Linux, with `rpmbuild` installed |
+| Linux (`.AppImage`) | `npm run dist:appimage` | Linux |
+| Linux (`.pacman`) | `npm run dist:arch` | Linux, with `bsdtar` installed |
+| Linux (all of the above) | `npm run dist:linux` | Linux |
+| macOS (`.dmg`, universal) | `npm run dist:mac` | **macOS only** |
+| Everything at once | `npm run dist` | Linux (the macOS leg still needs macOS) |
+
+`.dmg` builds require macOS and cannot be cross-compiled. In CI they are produced by [`.github/workflows/build.yml`](.github/workflows/build.yml), which is dispatch-only:
+
 ```bash
-npm run dist:win   
-```
-or
-```bash
-npm run dist:linux 
-```
-or (for Arch Linux)
-```bash
-npm run dist:arch
-```
-or (for an AppImage only)
-```bash
-npm run dist:appimage
-```
-or (for a .deb only)
-```bash
-npm run dist:deb
-```
-or (for a .rpm only)
-```bash
-npm run dist:rpm
-```
-or (for macOS)
-```bash
-npm run dist:mac
-```
-or (build all platforms at once)
-```bash
-npm run dist
+# artifacts only, nothing published
+gh workflow run "Build & Upload MacOS Artifacts" -f publish_release=false
+
+# artifacts plus attach the .dmg to a GitHub Release
+gh workflow run "Build & Upload MacOS Artifacts" -f publish_release=true
 ```
 
 > [!IMPORTANT]
