@@ -18,7 +18,7 @@ function getRecentHistoryItems(history, count = 5) {
   if (!history || history.length === 0) return [];
   const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const recent = history
-    .filter((h) => h.watchedAt && h.watchedAt > thirtyDaysAgo)
+    .filter((h) => h?.watchedAt && h.watchedAt > thirtyDaysAgo)
     .sort((a, b) => b.watchedAt - a.watchedAt);
 
   const seen = new Set();
@@ -126,7 +126,7 @@ export default function HomePage({
 
     // Build a Set of already-watched TMDB ids for dedup
     const watchedIds = new Set(
-      (history || []).map((h) => `${h.media_type || "movie"}_${h.id}`),
+      (history || []).map((h) => `${h?.media_type || "movie"}_${h?.id}`),
     );
 
     // For each source, try /recommendations first, fall back to /similar

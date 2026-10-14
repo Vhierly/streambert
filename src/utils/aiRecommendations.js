@@ -11,6 +11,7 @@ function buildGenreAffinity(history) {
   const genreRatings = {};
   
   for (const item of history) {
+    if (!item) continue;
     const genres = item.genres || [];
     const rating = item.vote_average || 5;
     const weight = rating / 10; // Normalize to 0-1
@@ -81,14 +82,16 @@ export function analyzeWatchHistory(history) {
   const genreCounts = {};
   let totalRating = 0;
   let ratingCount = 0;
+  let validCount = 0;
   const dayCounts = {};
-  
+
   for (const item of history) {
     // A null/undefined *entry* is JSON-representable, so a corrupted
     // streambert_history string can produce one on its own — and every read
     // below is on item.*, so one bad entry throws and blanks the home screen
     // behind ErrorBoundary. Same guard style as taste.js pickBecauseYouWatched.
     if (!item) continue;
+    validCount++;
 
     // Genre analysis
     for (const genre of item.genres || []) {
@@ -123,7 +126,7 @@ export function analyzeWatchHistory(history) {
   const watchStreak = calculateWatchStreak(history);
   
   return {
-    totalWatched: history.length,
+    totalWatched: validCount,
     favoriteGenres,
     averageRating: ratingCount > 0 ? totalRating / ratingCount : 0,
     watchStreak,
@@ -193,7 +196,7 @@ export async function getPersonalizedRecommendations(apiKey, history, limit = 10
   );
   
   // Filter out already-watched
-  const watchedIds = new Set(history.map((h) => h.id));
+  const watchedIds = new Set(history.filter(Boolean).map((h) => h.id));
   const filtered = (recommendations.results || []).filter(
     (r) => !watchedIds.has(r.id)
   );
@@ -206,8 +209,10 @@ export function getBecauseYouWatched(history, limit = 5) {
   if (!history || history.length === 0) return [];
   
   // Get the most recent watched item
-  const recent = history.sort(
-    (a, b) => new Date(b.watchedAt) - new Date(a.watchedAt)
+  // Skip null/undefined entries — same guard style as taste.js.
+  const entries = history.filter((h) => h);
+  const recent = entries.sort(
+    (a, b) => new Date(b.watchedAt) - new Date(a.watchedAt),
   )[0];
   
   if (!recent) return [];

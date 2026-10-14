@@ -130,6 +130,7 @@ export default function LibraryPage({
           <div className="library-section-title">Watch History</div>
           <div className="history-rows">
             {history.map((item, i) => {
+              if (!item) return null;
               const pk =
                 item.media_type === "movie"
                   ? `movie_${item.id}`

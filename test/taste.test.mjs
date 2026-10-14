@@ -509,6 +509,198 @@ const watched = (id, genres, extra = {}) => ({
   }
 }
 
+// ── 11. Null-entry sweep on the home-page history path ──────────────────────
+// TES-88. Three sites read history entries without guarding against null:
+//   1. getRecentHistoryItems filter (HomePage.jsx:21) — fires first
+//   2. watchedIds Set build (HomePage.jsx:129) — same effect, same history
+//   3. LibraryPage.jsx:132 — the history list render
+// A null entry from JSON.parse("[null]") throws TypeError at site 1 and
+// bricks the home screen via ErrorBoundary. Try Again only clears hasError,
+// so it throws again immediately — permanent brick.
+
+// Extract getRecentHistoryItems from HomePage.jsx source and eval it.
+// The function is module-level (not exported), lives in a JSX file with React
+// imports, so we lift the text and eval it in isolation — same pattern as
+// reading buildTasteProfile's source in section 9.
+const homePageSrc = readFileSync(join(root, "src/pages/HomePage.jsx"), "utf8");
+const fnMatch = homePageSrc.match(
+  /function getRecentHistoryItems\(history, count = 5\) \{[\s\S]*?\n\}/,
+);
+checks++;
+if (!fnMatch) {
+  problems.push("getRecentHistoryItems not found in HomePage.jsx");
+} else {
+  // eslint-disable-next-line no-eval
+  const getRecentHistoryItems = eval(`(${fnMatch[0]})`);
+
+  const cases = [
+    [null],
+    [undefined],
+    [JSON.parse("[null]")],
+    [
+      { id: 1, media_type: "movie", watchedAt: new Date().toISOString() },
+      null,
+    ],
+    [{ id: 2, media_type: "movie", watchedAt: new Date().toISOString() }],
+  ];
+
+  for (const history of cases) {
+    checks++;
+    try {
+      const result = getRecentHistoryItems(history, 5);
+      if (!Array.isArray(result)) {
+        problems.push(
+          `getRecentHistoryItems(${JSON.stringify(history)}) returned non-array: ${result}`,
+        );
+      }
+    } catch (e) {
+      problems.push(
+        `getRecentHistoryItems threw on ${JSON.stringify(history)}: ${e.constructor.name}: ${e.message}`,
+      );
+    }
+  }
+
+  // The good entry must survive next to a bad one — skipping the entry is the
+  // fix, skipping the history is not. Use a numeric timestamp because the
+  // filter compares against a number (thirtyDaysAgo).
+  checks++;
+  try {
+    const result = getRecentHistoryItems(
+      [
+        { id: 1, media_type: "movie", watchedAt: Date.now(), title: "ok" },
+        null,
+      ],
+      5,
+    );
+    if (result.length !== 1 || result[0].id !== 1) {
+      problems.push("a null entry cost the result its usable item");
+    }
+  } catch (e) {
+    problems.push(
+      `getRecentHistoryItems threw on good+null: ${e.constructor.name}: ${e.message}`,
+    );
+  }
+}
+
+// Site 2: watchedIds Set construction must use optional chaining.
+checks++;
+if (!homePageSrc.includes('h?.media_type || "movie"}_${h?.id')) {
+  problems.push(
+    "watchedIds Set build (HomePage.jsx:129) is not null-safe — revert detected",
+  );
+}
+
+// Site 3: LibraryPage.jsx must skip null entries in the history map.
+const librarySrc = readFileSync(join(root, "src/pages/LibraryPage.jsx"), "utf8");
+checks++;
+if (!librarySrc.includes("if (!item) return null")) {
+  problems.push(
+    "LibraryPage.jsx:132 has no null-entry guard — revert detected",
+  );
+}
+
+// Dead code: getBecauseYouWatched and buildGenreAffinity must not throw.
+checks++;
+try {
+  aiMod.getBecauseYouWatched([null, { id: 1, watchedAt: new Date().toISOString() }]);
+} catch (e) {
+  problems.push(
+    `getBecauseYouWatched threw on a null entry: ${e.constructor.name}: ${e.message}`,
+  );
+}
+checks++;
+try {
+  aiMod.getBecauseYouWatched([{ id: 1, watchedAt: new Date().toISOString() }, null]);
+} catch (e) {
+  problems.push(
+    `getBecauseYouWatched threw on good+null: ${e.constructor.name}: ${e.message}`,
+  );
+}
+checks++;
+// buildGenreAffinity is not exported; test via analyzeWatchHistory which calls it.
+try {
+  aiMod.analyzeWatchHistory([null, { id: 1, genres: [{ id: 53 }], watchedAt: new Date().toISOString() }]);
+} catch (e) {
+  problems.push(
+    `analyzeWatchHistory threw on a null entry (buildGenreAffinity unguarded): ${e.constructor.name}: ${e.message}`,
+  );
+}
+
+// ── 12. totalWatched counts only valid entries (D4) ──────────────────────────
+// The guard skips null entries, so totalWatched must count only entries the
+// loop actually processed. 4 real watches + 1 null must report 4, not 5 —
+// otherwise the >= 5 gate in buildTasteProfile unlocks mostActiveDay from
+// only 4 real watches.
+{
+  // analyzeWatchHistory itself is the unguarded call under a full revert, so
+  // the case has to be caught here — an uncaught throw aborts the suite with a
+  // stack trace instead of the FAIL list the revert proof is supposed to show.
+  let analysis = null;
+  checks++;
+  try {
+    analysis = aiMod.analyzeWatchHistory([
+      watched(1, [53]),
+      watched(2, [53]),
+      watched(3, [28]),
+      watched(4, [28]),
+      null,
+    ]);
+  } catch (e) {
+    problems.push(
+      `analyzeWatchHistory threw on 4 good + 1 null: ${e.constructor.name}: ${e.message}`,
+    );
+  }
+  if (analysis) {
+    checks++;
+    if (analysis.totalWatched !== 4) {
+      problems.push(`totalWatched counted a skipped null entry: ${analysis.totalWatched}`);
+    }
+  }
+
+  let profile = null;
+  checks++;
+  try {
+    profile = mod.buildTasteProfile([
+      watched(1, [53], { watchedAt: "2024-06-01T00:00:00Z" }),
+      watched(2, [53], { watchedAt: "2024-06-02T00:00:00Z" }),
+      watched(3, [28], { watchedAt: "2024-06-03T00:00:00Z" }),
+      watched(4, [28], { watchedAt: "2024-06-04T00:00:00Z" }),
+      null,
+    ], 3);
+  } catch (e) {
+    problems.push(
+      `buildTasteProfile threw on 4 good + 1 null: ${e.constructor.name}: ${e.message}`,
+    );
+  }
+  if (profile) {
+    checks++;
+    if (profile.totalWatched !== 4) {
+      problems.push(`profile.totalWatched counted a skipped null entry: ${profile.totalWatched}`);
+    }
+    checks++;
+    if (profile.mostActiveDay !== null) {
+      problems.push(`mostActiveDay unlocked with only 4 valid watches: ${profile.mostActiveDay}`);
+    }
+  }
+}
+
+// ── 13. getPersonalizedRecommendations guards null entries (D5) ──────────────
+// Same module, same null-entry class. getPersonalizedRecommendations maps
+// history to h.id without filtering nulls — throws on [good, null].
+{
+  checks++;
+  try {
+    await aiMod.getPersonalizedRecommendations("test-key", [
+      watched(1, [53]),
+      null,
+    ]);
+  } catch (e) {
+    problems.push(
+      `getPersonalizedRecommendations threw on [good, null]: ${e.constructor.name}: ${e.message}`,
+    );
+  }
+}
+
 // ── Report ──────────────────────────────────────────────────────────────────
 for (const p of Object.values(patched)) {
   try {
