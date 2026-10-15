@@ -6,6 +6,10 @@ import {
   secureStorage,
   isElectron,
   clearAppCaches,
+  getCurrentProfileId,
+  getProfileDataOrLegacy,
+  setProfileData,
+  removeProfileData,
 } from "../utils/storage";
 import { clearTmdbCache } from "../utils/api";
 import {
@@ -1773,17 +1777,18 @@ function AppearanceSection() {
 // ── Library & Privacy Section ─────────────────────────────────────────────────
 function LibraryPrivacySection() {
   const [sort, setSort] = useState(
-    () => storage.get(STORAGE_KEYS.LIBRARY_SORT) || "manual",
+    () => getProfileDataOrLegacy(STORAGE_KEYS.LIBRARY_SORT) || "manual",
   );
   const [historyEnabled, setHistoryEnabled] = useState(() => {
-    const v = storage.get(STORAGE_KEYS.HISTORY_ENABLED);
+    const v = getProfileDataOrLegacy(STORAGE_KEYS.HISTORY_ENABLED);
     return v === 0 || v === false ? false : true;
   });
   const [saved, setSaved] = useState(false);
 
   const handleSave = () => {
-    storage.set(STORAGE_KEYS.LIBRARY_SORT, sort);
-    storage.set(STORAGE_KEYS.HISTORY_ENABLED, historyEnabled ? 1 : 0);
+    const pid = getCurrentProfileId();
+    setProfileData(pid, STORAGE_KEYS.LIBRARY_SORT, sort);
+    setProfileData(pid, STORAGE_KEYS.HISTORY_ENABLED, historyEnabled ? 1 : 0);
     window.dispatchEvent(
       new CustomEvent("streambert:library-sort-changed", { detail: sort }),
     );
@@ -4539,6 +4544,9 @@ export default function SettingsPage({
   const [autoplayNextLayout, setAutoplayNextLayout] = useState(
     () => storage.get(STORAGE_KEYS.AUTOPLAY_NEXT_LAYOUT) || "right",
   );
+  const [trailerAutoplayEnabled, setTrailerAutoplayEnabled] = useState(
+    () => storage.get(STORAGE_KEYS.TRAILER_AUTOPLAY_ENABLED) ?? true,
+  );
   const [saved, setSaved] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetHovered, setResetHovered] = useState(false);
@@ -4716,9 +4724,10 @@ export default function SettingsPage({
   };
 
   const handleClearWatchProgress = async () => {
-    storage.remove(STORAGE_KEYS.WATCH_PROGRESS);
-    storage.remove(STORAGE_KEYS.HISTORY);
-    storage.remove(STORAGE_KEYS.WATCHED);
+    const pid = getCurrentProfileId();
+    removeProfileData(pid, STORAGE_KEYS.WATCH_PROGRESS);
+    removeProfileData(pid, STORAGE_KEYS.HISTORY);
+    removeProfileData(pid, STORAGE_KEYS.WATCHED);
     if (isElectron) await window.electron.clearWatchData();
     setTimeout(() => window.location.reload(), 800);
     return { msg: "✓ Watch data cleared" };
@@ -5064,6 +5073,35 @@ export default function SettingsPage({
           </div>
 
           <Divider />
+
+          {/* Trailer Autoplay */}
+          <div style={{ marginBottom: 40 }}>
+            <div className="settings-section-title">Trailer Autoplay</div>
+            <div
+              style={{
+                fontSize: 13,
+                color: "var(--text3)",
+                marginBottom: 16,
+                lineHeight: 1.6,
+              }}
+            >
+              Automatically play the trailer (muted) when opening a movie or
+              TV show detail page.
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Toggle
+                value={trailerAutoplayEnabled}
+                onChange={(val) => {
+                  setTrailerAutoplayEnabled(val);
+                  storage.set(STORAGE_KEYS.TRAILER_AUTOPLAY_ENABLED, val);
+                  flash();
+                }}
+              />
+              <span style={{ fontSize: 13, color: "var(--text3)" }}>
+                {trailerAutoplayEnabled ? "Enabled" : "Disabled"}
+              </span>
+            </div>
+          </div>
 
           {/* Auto-Watched Threshold */}
           <div style={{ marginBottom: 40 }}>

@@ -285,6 +285,14 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("analyze-watch-history", { history }),
   getMoodRecommendations: (mood, limit) =>
     ipcRenderer.invoke("get-mood-recommendations", { mood, limit }),
+
+  // Content reports + local source health voting (renderer-side)
+  getReports: () => ipcRenderer.invoke("get-reports"),
+  addReport: (data) => ipcRenderer.invoke("add-report", data),
+  deleteReport: (id) => ipcRenderer.invoke("delete-report", id),
+  getSourceHealth: () => ipcRenderer.invoke("get-source-health"),
+  voteSourceHealth: (sourceId, vote) =>
+    ipcRenderer.invoke("vote-source-health", { sourceId, vote }),
 });
 
 if (process.platform === "darwin") {

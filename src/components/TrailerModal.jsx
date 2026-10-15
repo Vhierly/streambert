@@ -84,7 +84,7 @@ export default function TrailerModal({ trailerKey, title, onClose }) {
     const instance = list[idx];
     const label = instance.replace(/^https?:\/\//, "");
     setStatusMsg(idx === 0 ? "Loading trailer…" : `Trying ${label}…`);
-    setCurrentSrc(`${instance}/embed/${trailerKey}?autoplay=1&listen=0`);
+    setCurrentSrc(`${instance}/embed/${trailerKey}?autoplay=1&listen=0&mute=1`);
   }, [trailerKey]);
 
   useEffect(() => {

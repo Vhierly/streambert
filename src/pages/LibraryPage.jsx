@@ -4,7 +4,7 @@ import { imgUrl } from "../utils/api";
 import { EyeIcon, WatchedIcon } from "../components/Icons";
 import { useRatings, getRatingForItem } from "../utils/useRatings";
 import { isRestricted } from "../utils/ageRating";
-import { storage, STORAGE_KEYS } from "../utils/storage";
+import { storage, STORAGE_KEYS, getProfileDataOrLegacy } from "../utils/storage";
 
 export default function LibraryPage({
   history,
@@ -24,7 +24,7 @@ export default function LibraryPage({
   const { ratingsMap, ageLimitSetting } = useRatings(allItems);
 
   const [sort, setSort] = useState(
-    () => storage.get(STORAGE_KEYS.LIBRARY_SORT) || "manual",
+    () => getProfileDataOrLegacy(STORAGE_KEYS.LIBRARY_SORT) || "manual",
   );
   useEffect(() => {
     const handler = (e) => setSort(e.detail);

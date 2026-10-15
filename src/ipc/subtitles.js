@@ -507,8 +507,18 @@ function register({ getDownloads, saveDownloads }) {
   // ── Delete a single subtitle file ─────────────────────────────────────────
   ipcMain.handle("delete-subtitle-file", (_, { downloadId, subtitlePath }) => {
     try {
-      if (subtitlePath && fs.existsSync(subtitlePath))
-        fs.unlinkSync(subtitlePath);
+      if (subtitlePath && typeof subtitlePath === "string") {
+        // Validate subtitlePath is within a known download directory
+        const downloads = getDownloads();
+        const isKnown = downloads.some((d) => {
+          if (!d.downloadPath) return false;
+          const dp = path.resolve(d.downloadPath);
+          const sp = path.resolve(subtitlePath);
+          return sp === dp || sp.startsWith(dp + path.sep);
+        });
+        if (isKnown && fs.existsSync(subtitlePath))
+          fs.unlinkSync(subtitlePath);
+      }
       if (downloadId) {
         const downloads = getDownloads();
         const idx = downloads.findIndex((d) => d.id === downloadId);
