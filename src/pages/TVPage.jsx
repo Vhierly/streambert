@@ -594,7 +594,7 @@ export default function TVPage({
   // Auto-open trailer on detail pages when enabled in settings
   useEffect(() => {
     if (!trailerKey) return;
-    if (!storage.get(STORAGE_KEYS.TRAILER_AUTOPLAY_ENABLED)) return;
+    if (storage.get(STORAGE_KEYS.TRAILER_AUTOPLAY_ENABLED) === false) return;
     setShowTrailer(true);
   }, [trailerKey]);
 
