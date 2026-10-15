@@ -4232,9 +4232,6 @@ function SmartDownloadsSection() {
   const [endHour, setEndHour] = useState(6);
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [maxBandwidth, setMaxBandwidth] = useState(0);
-  const [autoConvert, setAutoConvert] = useState(false);
-  const [convertFormat, setConvertFormat] = useState("h265");
-  const [convertPreset, setConvertPreset] = useState("medium");
   const [saved, setSaved] = useState(false);
 
   // Load settings on mount
@@ -4249,9 +4246,6 @@ function SmartDownloadsSection() {
       setEndHour(s.scheduleEndHour);
       setMaxConcurrent(s.maxConcurrent);
       setMaxBandwidth(s.maxBandwidth);
-      setAutoConvert(s.autoConvert);
-      setConvertFormat(s.convertFormat);
-      setConvertPreset(s.convertPreset);
     });
   }, []);
 
@@ -4266,9 +4260,6 @@ function SmartDownloadsSection() {
       scheduleEndHour: endHour,
       maxConcurrent,
       maxBandwidth,
-      autoConvert,
-      convertFormat,
-      convertPreset,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -4453,58 +4444,6 @@ function SmartDownloadsSection() {
                 0 = unlimited
               </span>
             </div>
-          </div>
-
-          {/* Auto-convert */}
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <Toggle value={autoConvert} onChange={setAutoConvert} />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>
-                  Auto-convert after download
-                </div>
-                <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
-                  Convert to a more efficient format using ffmpeg
-                </div>
-              </div>
-            </div>
-            {autoConvert && (
-              <div
-                style={{
-                  marginTop: 12,
-                  display: "flex",
-                  gap: 16,
-                  flexWrap: "wrap",
-                }}
-              >
-                <label style={{ fontSize: 13, color: "var(--text2)" }}>
-                  Format
-                  <select
-                    value={convertFormat}
-                    onChange={(e) => setConvertFormat(e.target.value)}
-                    className="apikey-input"
-                    style={{ marginLeft: 8, width: "auto" }}
-                  >
-                    <option value="h265">H.265 (HEVC)</option>
-                    <option value="h264">H.264 (AVC)</option>
-                    <option value="aac">AAC Audio</option>
-                  </select>
-                </label>
-                <label style={{ fontSize: 13, color: "var(--text2)" }}>
-                  Preset
-                  <select
-                    value={convertPreset}
-                    onChange={(e) => setConvertPreset(e.target.value)}
-                    className="apikey-input"
-                    style={{ marginLeft: 8, width: "auto" }}
-                  >
-                    <option value="fast">Fast (lower quality)</option>
-                    <option value="medium">Medium (balanced)</option>
-                    <option value="slow">Slow (best quality)</option>
-                  </select>
-                </label>
-              </div>
-            )}
           </div>
         </>
       )}

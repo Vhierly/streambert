@@ -243,6 +243,12 @@ function register(getMainWindow, { writeSecretMigration }) {
     }
 
     try {
+      // MPEG-TS has no mvhd box — prefer the downloader's EXTINF sum.
+      if (path.extname(filePath).toLowerCase() === ".ts") {
+        const { getDownloadDuration } = require("./downloads");
+        const secs = getDownloadDuration(filePath);
+        if (secs > 0) return { ok: true, duration: secs };
+      }
       const secs = parseMvhdDuration(filePath);
       if (secs > 0) return { ok: true, duration: secs };
     } catch {}

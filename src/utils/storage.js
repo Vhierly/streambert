@@ -44,7 +44,6 @@ export const STORAGE_KEYS = {
   SAVED_ORDER: "savedOrder",
   LOCAL_FILES: "localFiles",
   DOWNLOAD_PATH: "downloadPath",
-
   START_PAGE: "startPage",
   AGE_LIMIT: "ageLimit",
   RATING_COUNTRY: "ratingCountry",

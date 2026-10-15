@@ -217,4 +217,45 @@ const ok = (msg) => { console.log(`  ✓ ${msg}`); passed++; };
   }
 }
 
-console.log(`\nPASS — download-hardening: ${passed} checks (D1 crash, D2 false-success, D3 mvhd)`);
+// ── D6: HLS .ts downloads have duration (EXTINF sum) ─────────────────────────
+
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "d6-"));
+  const segData = Buffer.alloc(512, 0x41);
+
+  const playlist = `#EXTM3U\n#EXTINF:1.0,\nseg0.ts\n#EXTINF:1.0,\nseg1.ts\n#EXTINF:1.0,\nseg2.ts\n#EXTINF:1.0,\nseg3.ts\n#EXTINF:1.0,\nseg4.ts\n#EXT-X-ENDLIST\n`;
+  const server = http.createServer((req, res) => {
+    if (req.url === "/playlist.m3u8") {
+      res.writeHead(200, { "Content-Type": "application/vnd.apple.mpegurl" });
+      res.end(playlist);
+    } else if (req.url.startsWith("/seg")) {
+      res.writeHead(200, { "Content-Type": "video/MP2T" });
+      res.end(segData);
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  await new Promise((r) => server.listen(0, r));
+  const port = server.address().port;
+
+  try {
+    const destPath = path.join(tmpDir, "assembled.ts");
+    const result = await download(
+      `http://127.0.0.1:${port}/playlist.m3u8`,
+      destPath,
+      () => {},
+      {},
+    );
+    assert.equal(result.ext, ".ts", "D6: extension should be .ts");
+    assert.equal(result.segments, 5, "D6: 5 segments");
+    assert.ok(Math.abs(result.durationSecs - 5.0) < 0.01,
+      `D6: durationSecs should be ~5.0, got ${result.durationSecs}`);
+    assert.ok(!fs.readFileSync(destPath).includes("mvhd"),
+      "D6: .ts file has no mvhd box");
+    ok("D6: HLS .ts download returns durationSecs=5.0 (EXTINF sum, no mvhd needed)");
+  } finally {
+    server.close();
+  }
+}
+
+console.log(`\nPASS — download-hardening: ${passed} checks (D1 crash, D2 false-success, D3 mvhd, D6 ts-duration)`);

@@ -2732,13 +2732,6 @@ kbd {
 }
 
 
-.download-folder-path {
-    font-size: 12px;
-    color: var(--text3);
-    word-break: break-all;
-    flex: 1;
-}
-
 .download-checking {
     display: flex;
     align-items: center;

@@ -293,6 +293,7 @@ function register(getMainWindow) {
             downloads[idx].progress = 100;
             downloads[idx].filePath = result.filePath;
             downloads[idx].size = formatBytes(result.bytes);
+            if (result.durationSecs > 0) downloads[idx].durationSecs = result.durationSecs;
 
             // Rename file to proper media name
             try {
@@ -672,10 +673,16 @@ function register(getMainWindow) {
   });
 }
 
+function getDownloadDuration(filePath) {
+  const dl = downloads.find((d) => d.filePath === filePath);
+  return dl?.durationSecs ?? null;
+}
+
 module.exports = {
   register,
   loadDownloads,
   saveDownloads,
   killAllDownloads,
   getDownloads: () => downloads,
+  getDownloadDuration,
 };
