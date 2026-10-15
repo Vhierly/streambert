@@ -2568,14 +2568,21 @@ function NotificationsSection() {
     () => storage.get(STORAGE_KEYS.NOTIFY_DOWNLOAD_COMPLETE) !== false,
   );
   const [notifyEpisode, setNotifyEpisode] = useState(() => {
-    const stored = storage.get(STORAGE_KEYS.NOTIFY_NEW_EPISODE);
-    return stored === null || stored === undefined ? true : !!stored;
+    const stored = getProfileData(
+      getCurrentProfileId(),
+      STORAGE_KEYS.NOTIFY_NEW_EPISODE,
+    );
+    return stored === true;
   });
   const [saved, setSaved] = useState(false);
 
   const saveSettings = () => {
     storage.set(STORAGE_KEYS.NOTIFY_DOWNLOAD_COMPLETE, notifyDownload);
-    storage.set(STORAGE_KEYS.NOTIFY_NEW_EPISODE, notifyEpisode);
+    setProfileData(
+      getCurrentProfileId(),
+      STORAGE_KEYS.NOTIFY_NEW_EPISODE,
+      notifyEpisode,
+    );
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
