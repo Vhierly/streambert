@@ -54,6 +54,18 @@ export default function ProfilePicker({ profiles, currentId, onCreate, onSwitch,
                   <ProfileAvatar name={p.name} color={p.color} />
                   <span className="profile-picker-name">{p.name}</span>
                   {p.id === currentId && <span className="profile-active-badge">✓</span>}
+                  {profiles.length > 1 && (
+                    <button
+                      className="profile-delete-btn"
+                      title={`Delete ${p.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteConfirm(p.id);
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
               ))}
               <div className="profile-picker-item profile-add" onClick={() => setMode("create")}>

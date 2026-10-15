@@ -17,6 +17,9 @@ import {
   getProfileData,
   setProfileData,
   clearProfileData,
+  getCurrentProfileId,
+  getProfileDataOrLegacy,
+  migrateLegacyToDefaultProfile,
 } from "./utils/storage";
 import {
   applyAccentColor,
@@ -35,6 +38,7 @@ import {
 } from "./utils/discordPresence";
 
 import Sidebar from "./components/Sidebar";
+import ProfilePicker from "./components/ProfilePicker";
 import SearchModal from "./components/SearchModal";
 import SetupScreen from "./components/SetupScreen";
 import CloseConfirmModal from "./components/CloseConfirmModal";
@@ -64,7 +68,7 @@ export default function App() {
   const [showSearch, setShowSearch] = useState(false);
   const [dlSearchOpen, setDlSearchOpen] = useState(false);
   const [librarySort, setLibrarySort] = useState(
-    () => storage.get(STORAGE_KEYS.LIBRARY_SORT) || "manual",
+    () => getProfileDataOrLegacy(STORAGE_KEYS.LIBRARY_SORT) || "manual",
   );
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [platform, setPlatform] = useState(null);
@@ -72,14 +76,20 @@ export default function App() {
   // Navigation history stack for Ctrl+Z back navigation
   const [navStack, setNavStack] = useState([]);
 
-  const [saved, setSaved] = useState(() => storage.get("saved") || {});
+  const [saved, setSaved] = useState(() => getProfileDataOrLegacy("saved") || {});
   // Separate order array for drag-and-drop reordering
   const [savedOrder, setSavedOrder] = useState(
-    () => storage.get("savedOrder") || null,
+    () => getProfileDataOrLegacy("savedOrder") || null,
   );
-  const [progress, setProgress] = useState(() => storage.get("progress") || {});
-  const [history, setHistory] = useState(() => storage.get("history") || []);
-  const [watched, setWatched] = useState(() => storage.get("watched") || {});
+  const [progress, setProgress] = useState(
+    () => getProfileDataOrLegacy("progress") || {},
+  );
+  const [history, setHistory] = useState(
+    () => getProfileDataOrLegacy("history") || [],
+  );
+  const [watched, setWatched] = useState(
+    () => getProfileDataOrLegacy("watched") || {},
+  );
   const [toast, setToast] = useState(null);
   const [updateBanner, setUpdateBanner] = useState(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
@@ -96,7 +106,8 @@ export default function App() {
   const [profiles, setProfiles] = useState(() => {
     const stored = storage.get(STORAGE_KEYS.PROFILES);
     if (stored && Array.isArray(stored) && stored.length > 0) return stored;
-    // Migration: create default profile from existing single-user data
+    // First run (or upgrade from single-user): create the default profile and
+    // copy the legacy global keys into it, so nothing is lost.
     const defaultProfile = {
       id: "default",
       name: "Main",
@@ -112,6 +123,12 @@ export default function App() {
   });
   const [showProfilePicker, setShowProfilePicker] = useState(false);
 
+  // One-time migration of pre-profile data into the default profile.
+  // Runs once per install; idempotent inside migrateLegacyToDefaultProfile().
+  useEffect(() => {
+    migrateLegacyToDefaultProfile();
+  }, []);
+
   // Profile-scoped data loaders
   const loadProfileData = useCallback((profileId) => {
     return {
@@ -120,7 +137,8 @@ export default function App() {
       progress: getProfileData(profileId, "progress") || {},
       history: getProfileData(profileId, "history") || [],
       watched: getProfileData(profileId, "watched") || {},
-      librarySort: getProfileData(profileId, STORAGE_KEYS.LIBRARY_SORT) || "manual",
+      librarySort:
+        getProfileData(profileId, STORAGE_KEYS.LIBRARY_SORT) || "manual",
     };
   }, []);
 
@@ -133,6 +151,12 @@ export default function App() {
     setHistory(data.history);
     setWatched(data.watched);
     setLibrarySort(data.librarySort);
+    // Keep LibraryPage's own sort state in sync with the newly active profile
+    window.dispatchEvent(
+      new CustomEvent("streambert:library-sort-changed", {
+        detail: data.librarySort,
+      }),
+    );
   }, [currentProfileId, loadProfileData]);
 
   const createProfile = useCallback(({ name, color }) => {
@@ -901,28 +925,28 @@ export default function App() {
         setSavedOrder((prev) => {
           const currentOrder = prev || Object.keys(currentSaved);
           const newOrder = currentOrder.filter((k) => k !== id);
-          setProfileData(currentProfileId, "savedOrder", newOrder);
+          setProfileData(getCurrentProfileId(), "savedOrder", newOrder);
           return newOrder;
-          });
-          } else {
-          next[id] = {
+        });
+      } else {
+        next[id] = {
           id: item.id,
           title: item.title || item.name,
           poster_path: item.poster_path,
           media_type: mt,
           vote_average: item.vote_average,
           year: (item.release_date || item.first_air_date || "").slice(0, 4),
-          };
-          showToast("Added to watchlist");
-          setSavedOrder((prev) => {
+        };
+        showToast("Added to watchlist");
+        setSavedOrder((prev) => {
           const currentOrder = prev || Object.keys(currentSaved);
           const newOrder = [...currentOrder, id];
-          setProfileData(currentProfileId, "savedOrder", newOrder);
+          setProfileData(getCurrentProfileId(), "savedOrder", newOrder);
           return newOrder;
         });
       }
       setSaved(next);
-      storage.set("saved", next);
+      setProfileData(getCurrentProfileId(), "saved", next);
     },
     [showToast, getMediaType],
   );
@@ -937,7 +961,7 @@ export default function App() {
 
   const addHistory = useCallback((item) => {
     // Respect the "disable watch history" setting
-    const historyEnabled = storage.get(STORAGE_KEYS.HISTORY_ENABLED);
+    const historyEnabled = getProfileDataOrLegacy(STORAGE_KEYS.HISTORY_ENABLED);
     if (historyEnabled === 0 || historyEnabled === false) return;
     const entry = {
       id: item.id,
@@ -962,7 +986,7 @@ export default function App() {
         return false;
       });
       const next = [entry, ...filtered].slice(0, 100);
-      storage.set("history", next);
+      setProfileData(getCurrentProfileId(), "history", next);
       return next;
     });
   }, []); // no deps needed
@@ -974,7 +998,7 @@ export default function App() {
     setProgress((prev) => {
       if (prev[key] === pct) return prev; // no change - skip write
       const next = { ...prev, [key]: pct };
-      storage.set("progress", next);
+      setProfileData(getCurrentProfileId(), "progress", next);
       return next;
     });
   }, []); // no deps needed
@@ -982,7 +1006,7 @@ export default function App() {
   const markWatched = useCallback((key) => {
     setWatched((prev) => {
       const next = { ...prev, [key]: true };
-      storage.set("watched", next);
+      setProfileData(getCurrentProfileId(), "watched", next);
       return next;
     });
   }, []);
@@ -991,7 +1015,7 @@ export default function App() {
     setWatched((prev) => {
       const next = { ...prev };
       delete next[key];
-      storage.set("watched", next);
+      setProfileData(getCurrentProfileId(), "watched", next);
       return next;
     });
   }, []);
@@ -1005,7 +1029,7 @@ export default function App() {
         }
         return false;
       });
-      storage.set("history", next);
+      setProfileData(getCurrentProfileId(), "history", next);
       return next;
     });
   }, []);
@@ -1064,7 +1088,7 @@ export default function App() {
 
   const handleReorderSaved = useCallback((newOrder) => {
     setSavedOrder(newOrder);
-    storage.set("savedOrder", newOrder);
+    setProfileData(getCurrentProfileId(), "savedOrder", newOrder);
   }, []);
 
   // Stable handler
@@ -1097,6 +1121,8 @@ export default function App() {
           canGoBack={navStack.length > 0}
           onBack={navigateBack}
           onShowShortcuts={() => setShowShortcuts(true)}
+          onShowProfilePicker={() => setShowProfilePicker(true)}
+          currentProfile={profiles.find((p) => p.id === currentProfileId)}
         />
 
         <div className="main">
@@ -1525,6 +1551,16 @@ export default function App() {
         )}
         {showShortcuts && (
           <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />
+        )}
+        {showProfilePicker && (
+          <ProfilePicker
+            profiles={profiles}
+            currentId={currentProfileId}
+            onCreate={createProfile}
+            onSwitch={switchProfile}
+            onDelete={deleteProfile}
+            onClose={() => setShowProfilePicker(false)}
+          />
         )}
       </div>
     </ErrorBoundary>
