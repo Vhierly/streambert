@@ -6,6 +6,10 @@ import {
   secureStorage,
   isElectron,
   clearAppCaches,
+  getCurrentProfileId,
+  getProfileDataOrLegacy,
+  setProfileData,
+  removeProfileData,
 } from "../utils/storage";
 import { clearTmdbCache } from "../utils/api";
 import {
@@ -1694,17 +1698,18 @@ function AppearanceSection() {
 // ── Library & Privacy Section ─────────────────────────────────────────────────
 function LibraryPrivacySection() {
   const [sort, setSort] = useState(
-    () => storage.get(STORAGE_KEYS.LIBRARY_SORT) || "manual",
+    () => getProfileDataOrLegacy(STORAGE_KEYS.LIBRARY_SORT) || "manual",
   );
   const [historyEnabled, setHistoryEnabled] = useState(() => {
-    const v = storage.get(STORAGE_KEYS.HISTORY_ENABLED);
+    const v = getProfileDataOrLegacy(STORAGE_KEYS.HISTORY_ENABLED);
     return v === 0 || v === false ? false : true;
   });
   const [saved, setSaved] = useState(false);
 
   const handleSave = () => {
-    storage.set(STORAGE_KEYS.LIBRARY_SORT, sort);
-    storage.set(STORAGE_KEYS.HISTORY_ENABLED, historyEnabled ? 1 : 0);
+    const pid = getCurrentProfileId();
+    setProfileData(pid, STORAGE_KEYS.LIBRARY_SORT, sort);
+    setProfileData(pid, STORAGE_KEYS.HISTORY_ENABLED, historyEnabled ? 1 : 0);
     window.dispatchEvent(
       new CustomEvent("streambert:library-sort-changed", { detail: sort }),
     );
@@ -3537,9 +3542,10 @@ export default function SettingsPage({
   };
 
   const handleClearWatchProgress = async () => {
-    storage.remove(STORAGE_KEYS.WATCH_PROGRESS);
-    storage.remove(STORAGE_KEYS.HISTORY);
-    storage.remove(STORAGE_KEYS.WATCHED);
+    const pid = getCurrentProfileId();
+    removeProfileData(pid, STORAGE_KEYS.WATCH_PROGRESS);
+    removeProfileData(pid, STORAGE_KEYS.HISTORY);
+    removeProfileData(pid, STORAGE_KEYS.WATCHED);
     if (isElectron) await window.electron.clearWatchData();
     setTimeout(() => window.location.reload(), 800);
     return { msg: "✓ Watch data cleared" };

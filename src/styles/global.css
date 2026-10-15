@@ -273,6 +273,219 @@ body,
     flex-shrink: 0;
 }
 
+/* ── Profile picker ─────────────────────────────────────────────────────── */
+.profile-picker-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.profile-picker-modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 40px;
+    min-width: 380px;
+    max-width: 520px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+.profile-picker-title {
+    font-size: 22px;
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 24px;
+    color: var(--text);
+}
+.profile-picker-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    justify-content: center;
+}
+.profile-picker-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    position: relative;
+    padding: 8px;
+    border-radius: var(--radius);
+    transition: background 0.15s;
+}
+.profile-picker-item:hover {
+    background: var(--surface2);
+}
+.profile-picker-item.active .profile-avatar {
+    outline: 3px solid var(--accent, #e50914);
+    outline-offset: 2px;
+}
+.profile-avatar {
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+}
+.profile-picker-name {
+    font-size: 13px;
+    color: var(--text2);
+    text-align: center;
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.profile-active-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent, #e50914);
+    color: #fff;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+}
+.profile-delete-btn {
+    position: absolute;
+    bottom: 16px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--surface3);
+    border: none;
+    color: var(--text3);
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+}
+.profile-delete-btn:hover {
+    background: var(--red, #e53e3e);
+    color: #fff;
+}
+.profile-add-icon {
+    width: 80px;
+    height: 80px;
+    border-radius: var(--radius);
+    background: var(--surface2);
+    border: 2px dashed var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    color: var(--text3);
+}
+.profile-add:hover .profile-add-icon {
+    border-color: var(--accent, #e50914);
+    color: var(--accent, #e50914);
+}
+.profile-create-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+.profile-create-preview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.profile-name-input {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 15px;
+    outline: none;
+}
+.profile-name-input:focus {
+    border-color: var(--accent, #e50914);
+}
+.profile-color-row {
+    display: flex;
+    gap: 10px;
+}
+.profile-color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    padding: 0;
+}
+.profile-color-swatch.selected {
+    border-color: var(--text);
+    outline: 2px solid var(--surface);
+    outline-offset: 2px;
+}
+.profile-create-actions {
+    display: flex;
+    gap: 12px;
+}
+.profile-delete-confirm {
+    margin-top: 20px;
+    padding: 16px;
+    background: var(--surface2);
+    border-radius: var(--radius);
+    text-align: center;
+}
+.profile-delete-confirm p {
+    margin: 0 0 8px;
+    font-size: 14px;
+}
+.profile-delete-warn {
+    color: var(--red, #e53e3e);
+    font-size: 13px;
+}
+.profile-delete-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 12px;
+}
+
+/* ── Sidebar profile button ─────────────────────────────────────────────── */
+.sidebar-profile-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    cursor: pointer;
+    border: none;
+    background: none;
+    position: relative;
+}
+.sidebar-profile-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+}
+
 /* ── Main ──────────────────────────────────────────────────────────────── */
 .main {
     margin-left: var(--sidebar);

@@ -100,6 +100,9 @@ export const STORAGE_KEYS = {
   GAMEPAD_ENABLED: "gamepadEnabled",
   // Trailer autoplay on detail pages
   TRAILER_AUTOPLAY_ENABLED: "trailerAutoplayEnabled",
+  PROFILES: "profiles",
+  CURRENT_PROFILE: "currentProfile",
+  PROFILES_MIGRATED: "profilesMigrated",
 };
 
 export const getApiKey = () => storage.get(STORAGE_KEYS.API_KEY);
@@ -134,6 +137,81 @@ export const clearFailoverSource = (epKey) => {
     storage.set(STORAGE_KEYS.SOURCE_FAILOVER_CACHE, cache);
   }
 };
+
+// ── Profile-scoped storage ──────────────────────────────────────────────────
+// Per-profile data is stored under a profile-prefixed key. Note the returned
+// key is un-prefixed: storage.get/set add the "streambert_" app prefix, so the
+// real localStorage key is "streambert_p_<id>_<key>".
+const PROFILE_PREFIX = "p_";
+
+export function getProfileKey(profileId, key) {
+  return PROFILE_PREFIX + profileId + "_" + key;
+}
+
+export function getProfileData(profileId, key) {
+  return storage.get(getProfileKey(profileId, key));
+}
+
+export function setProfileData(profileId, key, value) {
+  storage.set(getProfileKey(profileId, key), value);
+}
+
+export function removeProfileData(profileId, key) {
+  storage.remove(getProfileKey(profileId, key));
+}
+
+export function clearProfileData(profileId) {
+  try {
+    // Must match the app prefix added by storage.set: streambert_ + p_<id>_
+    const prefix = "streambert_" + PROFILE_PREFIX + profileId + "_";
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith(prefix))
+      .forEach((k) => localStorage.removeItem(k));
+  } catch {}
+}
+
+// Leaf components (SettingsPage, LibraryPage) that aren't passed the active
+// profile read it from storage instead of prop-drilling through App.
+export function getCurrentProfileId() {
+  return storage.get(STORAGE_KEYS.CURRENT_PROFILE) || "default";
+}
+
+// Read the active profile's value, falling back to the pre-profile global key.
+// Needed on the first render after an upgrade, before the migration effect runs.
+export function getProfileDataOrLegacy(key) {
+  const v = getProfileData(getCurrentProfileId(), key);
+  return v != null ? v : storage.get(key);
+}
+
+// Keys that used to be global and are now per-profile.
+const PROFILE_SCOPED_LEGACY_KEYS = [
+  "saved",
+  "savedOrder",
+  "progress",
+  "history",
+  "watched",
+  STORAGE_KEYS.LIBRARY_SORT,
+  STORAGE_KEYS.HISTORY_ENABLED,
+];
+
+/**
+ * One-time move of pre-profile global data into the default profile.
+ * Idempotent: guarded by PROFILES_MIGRATED, and never overwrites an existing
+ * profile value. Returns true if this call performed the migration.
+ */
+export function migrateLegacyToDefaultProfile() {
+  if (storage.get(STORAGE_KEYS.PROFILES_MIGRATED)) return false;
+  for (const key of PROFILE_SCOPED_LEGACY_KEYS) {
+    const legacy = storage.get(key);
+    if (legacy == null) continue;
+    if (getProfileData("default", key) == null) {
+      setProfileData("default", key, legacy);
+    }
+    storage.remove(key);
+  }
+  storage.set(STORAGE_KEYS.PROFILES_MIGRATED, 1);
+  return true;
+}
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 

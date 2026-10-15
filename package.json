@@ -10,6 +10,8 @@
   "main": "index.js",
   "private": true,
   "scripts": {
+    "build": "vite build",
+    "test": "node tests/profile-storage.test.mjs && node tests/profile-picker.render.test.mjs",
     "dev": "vite build --watch",
     "build": "vite build",
     "start": "vite build && electron .",
