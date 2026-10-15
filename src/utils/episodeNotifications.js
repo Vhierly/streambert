@@ -37,3 +37,36 @@ export function shouldNotifyNewEpisode(prev, lastEpisode, now = Date.now()) {
     (!prevParsed || lastParsed > prevParsed)
   );
 }
+
+/**
+ * Deep link for a new-episode notification (TES-147).
+ * Carries the season because the in-app episode card navigates with
+ * `entry.season ?? 1`; without it the deep link landed on season 1 instead.
+ */
+export function newEpisodeDeepLink(id, season) {
+  return `streambert://show/${id}?season=${season ?? 1}`;
+}
+
+/**
+ * Resolve a `streambert://show/<id>?season=<n>` URL into the navigation payload
+ * for TVPage (TES-147). The URL carries only id + season, so the rest comes from
+ * `saved` — the profile's saved-items map. The entry found there is the same
+ * object the in-app episode card spreads, which is what makes both entry points
+ * render identical metadata before the TVPage TMDB fetch resolves.
+ *
+ * Returns null when the URL is not a show deep link.
+ */
+export function resolveDeepLink(url, saved = {}) {
+  const match = /^streambert:\/\/show\/(\d+)/.exec(url || "");
+  if (!match) return null;
+  const id = Number(match[1]);
+  // Regex, not `new URL()`: a malformed link must not throw inside the IPC
+  // listener, and this only ever has to read one integer.
+  const season = Number(/[?&]season=(\d+)/.exec(url)?.[1] ?? NaN);
+  return {
+    ...(saved[`tv_${id}`] || { id }),
+    id,
+    media_type: "tv",
+    ...(Number.isFinite(season) ? { season } : {}),
+  };
+}

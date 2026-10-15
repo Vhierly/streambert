@@ -12,9 +12,8 @@ function check(name, cond) {
   }
 }
 
-const { shouldNotifyNewEpisode } = await import(
-  "../src/utils/episodeNotifications.js"
-);
+const { shouldNotifyNewEpisode, newEpisodeDeepLink, resolveDeepLink } =
+  await import("../src/utils/episodeNotifications.js");
 
 // Fixed "now" for deterministic tests: Oct 15, 2026 noon local
 const NOW = new Date(2026, 9, 15, 12, 0, 0).getTime();
@@ -119,6 +118,52 @@ check(
     { air_date: "2026-10-05" },
     NOW,
   ) === false,
+);
+
+// ── 8. Deep link payload matches the in-app card (TES-147) ───────────────────
+// The in-app card navigates with `{ ...entry.seriesItem, season: entry.season ?? 1 }`,
+// where seriesItem IS the saved entry. The deep link must produce the same object.
+const SERIES = {
+  id: 1399,
+  media_type: "tv",
+  title: "Game of Thrones",
+  poster_path: "/poster.jpg",
+  vote_average: 8.4,
+  year: "2011",
+};
+const SAVED = { "tv_1399": SERIES };
+
+const cardPayload = { ...SERIES, season: 3 };
+const linkPayload = resolveDeepLink(newEpisodeDeepLink(1399, 3), SAVED);
+check(
+  "deep link payload equals the in-app card payload",
+  JSON.stringify(linkPayload) === JSON.stringify(cardPayload),
+);
+check(
+  "deep link payload keeps title + poster (the blank-render defect)",
+  linkPayload.title === "Game of Thrones" &&
+    linkPayload.poster_path === "/poster.jpg",
+);
+
+check(
+  "no season in cache defaults to season 1, like the card",
+  resolveDeepLink(newEpisodeDeepLink(1399, null), SAVED).season === 1,
+);
+check(
+  "unknown show falls back to id + media_type, no crash",
+  JSON.stringify(resolveDeepLink("streambert://show/999", SAVED)) ===
+    JSON.stringify({ id: 999, media_type: "tv" }),
+);
+check(
+  "non-show URL resolves to null",
+  resolveDeepLink("streambert://episode/1399", SAVED) === null &&
+    resolveDeepLink("", SAVED) === null &&
+    resolveDeepLink(null, SAVED) === null,
+);
+check(
+  "malformed season does not throw",
+  resolveDeepLink("streambert://show/1399?season=abc", SAVED).season ===
+    undefined,
 );
 
 console.log(`\npassed: ${passed}`);

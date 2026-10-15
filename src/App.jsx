@@ -21,7 +21,11 @@ import {
   getProfileDataOrLegacy,
   migrateLegacyToDefaultProfile,
 } from "./utils/storage";
-import { shouldNotifyNewEpisode } from "./utils/episodeNotifications";
+import {
+  shouldNotifyNewEpisode,
+  newEpisodeDeepLink,
+  resolveDeepLink,
+} from "./utils/episodeNotifications";
 import {
   applyAccentColor,
   applyTheme,
@@ -354,7 +358,7 @@ export default function App() {
                   season: lastEp?.season_number ?? null,
                   id: series.id,
                   seriesItem: series,
-                  url: `streambert://show/${series.id}`,
+                  url: newEpisodeDeepLink(series.id, lastEp?.season_number),
                 });
               }
 
@@ -838,14 +842,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gamepadConnected, gamepadEnabled]);
 
-  // ── Deep links (streambert://show/<id>) ───────────────────────────────────
+  // ── Deep links (streambert://show/<id>?season=<n>) ────────────────────────
   useEffect(() => {
     if (!window.electron?.onOpenDeepLink) return;
     const handler = (url) => {
-      const match = url.match(/^streambert:\/\/show\/(\d+)/);
-      if (!match) return;
-      const id = Number(match[1]);
-      navigate("tv", { id, media_type: "tv" });
+      const item = resolveDeepLink(url, savedRef.current);
+      if (item) navigate("tv", item);
     };
     window.electron.onOpenDeepLink(handler);
     return () => window.electron.offOpenDeepLink(handler);
