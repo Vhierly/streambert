@@ -12,7 +12,7 @@ function check(name, cond) {
   }
 }
 
-const { shouldNotifyNewEpisode, newEpisodeDeepLink, resolveDeepLink } =
+const { shouldNotifyNewEpisode, shouldScanForEpisodes, newEpisodeDeepLink, resolveDeepLink } =
   await import("../src/utils/episodeNotifications.js");
 
 // Fixed "now" for deterministic tests: Oct 15, 2026 noon local
@@ -120,7 +120,21 @@ check(
   ) === false,
 );
 
-// ── 8. Deep link payload matches the in-app card (TES-147) ───────────────────
+// ── 8. Opt-in gate: opt-out (and fresh install) skips the scan (TES-143 AC3) ──
+// The guard lives in App.jsx's startup effect; this is the same predicate.
+check("opt-out (false) skips the scan", shouldScanForEpisodes(false) === false);
+check(
+  "missing pref (fresh install) skips the scan",
+  shouldScanForEpisodes(undefined) === false &&
+    shouldScanForEpisodes(null) === false,
+);
+check("opt-in (true) runs the scan", shouldScanForEpisodes(true) === true);
+check(
+  "truthy non-boolean still skips the scan",
+  shouldScanForEpisodes("true") === false && shouldScanForEpisodes(1) === false,
+);
+
+// ── 9. Deep link payload matches the in-app card (TES-147) ───────────────────
 // The in-app card navigates with `{ ...entry.seriesItem, season: entry.season ?? 1 }`,
 // where seriesItem IS the saved entry. The deep link must produce the same object.
 const SERIES = {

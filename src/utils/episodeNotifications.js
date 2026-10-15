@@ -39,6 +39,15 @@ export function shouldNotifyNewEpisode(prev, lastEpisode, now = Date.now()) {
 }
 
 /**
+ * Whether the startup new-episode scan should run at all (TES-143 AC3).
+ * Per-profile opt-in, OFF by default: only an explicit `true` enables it, so a
+ * fresh install (missing key) and an explicit opt-out both stay quiet.
+ */
+export function shouldScanForEpisodes(notifyPref) {
+  return notifyPref === true;
+}
+
+/**
  * Deep link for a new-episode notification (TES-147).
  * Carries the season because the in-app episode card navigates with
  * `entry.season ?? 1`; without it the deep link landed on season 1 instead.

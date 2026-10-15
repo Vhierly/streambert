@@ -23,6 +23,7 @@ import {
 } from "./utils/storage";
 import {
   shouldNotifyNewEpisode,
+  shouldScanForEpisodes,
   newEpisodeDeepLink,
   resolveDeepLink,
 } from "./utils/episodeNotifications";
@@ -303,7 +304,7 @@ export default function App() {
       getCurrentProfileId(),
       STORAGE_KEYS.NOTIFY_NEW_EPISODE,
     );
-    if (notifyPref !== true) return;
+    if (!shouldScanForEpisodes(notifyPref)) return;
 
     let cancelled = false;
 
