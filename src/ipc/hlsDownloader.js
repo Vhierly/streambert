@@ -146,9 +146,12 @@ function createWriter(destPath) {
         out.once("drain", () => (failure ? reject(failure) : resolve()));
       }),
     close: () =>
-      new Promise((resolve, reject) =>
-        out.end(() => (failure ? reject(failure) : resolve())),
-      ),
+      new Promise((resolve, reject) => {
+        if (failure) return reject(failure);
+        out.end();
+        // 'close' fires after 'error', so failure is set by the time we check.
+        out.once("close", () => (failure ? reject(failure) : resolve()));
+      }),
     abort: () =>
       new Promise((resolve) => {
         try {
@@ -299,9 +302,13 @@ async function fetchSegments(media, destPath, headers, onProgress, signal) {
       pending.delete(writeIdx);
       writeIdx++;
       bytes += buf.length;
-      chain = chain.then(() => writer.write(buf));
+      chain = chain
+        .then(() => writer.write(buf))
+        .catch((e) => { failure = e; });
     }
   };
+
+  let failure = null;
 
   try {
     if (initSegment) {
@@ -334,6 +341,7 @@ async function fetchSegments(media, destPath, headers, onProgress, signal) {
     );
     flush();
     await chain;
+    if (failure) throw failure;
     await writer.close();
   } catch (e) {
     await chain.catch(() => {});

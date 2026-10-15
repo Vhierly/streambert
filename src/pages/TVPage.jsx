@@ -573,9 +573,6 @@ export default function TVPage({
     resetKey: `${item.id}_s${selectedSeason}_e${selectedEp?.episode_number ?? 0}`,
   });
 
-  const [downloaderFolder, setDownloaderFolder] = useState(
-    () => storage.get("downloaderFolder") || "",
-  );
   const [epMenu, setEpMenu] = useState(null); // { x, y, pk }
 
   // Blocked request stats, reset key includes season+episode so counter resets on each ep
@@ -1921,10 +1918,6 @@ export default function TVPage({
   const autoplayNextLayout =
     storage.get(STORAGE_KEYS.AUTOPLAY_NEXT_LAYOUT) || "right";
 
-  const handleSetDownloaderFolder = useCallback((folder) => {
-    setDownloaderFolder(folder);
-    storage.set("downloaderFolder", folder);
-  }, []);
 
   // Intercept fullscreen requests from embedded players (vidsrc / 2embed use
   // the native Fullscreen API which would otherwise fullscreen the entire app).

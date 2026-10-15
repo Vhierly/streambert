@@ -214,7 +214,7 @@ function register(getMainWindow) {
           filePath: null,
           status: "downloading",
           progress: 0,
-          speed: "",
+
           size: "",
           totalFragments: 0,
           completedFragments: 0,
@@ -268,10 +268,10 @@ function register(getMainWindow) {
             );
             update.lastMessage = `Fragment ${p.completed} / ${p.total}`;
           } else if (p.bytes > 0) {
-            update.progress = Math.min(
-              99,
-              Math.round((p.bytes / (p.bytes + 1)) * 100),
-            );
+            const pct = p.percent != null
+              ? p.percent
+              : (p.totalBytes > 0 ? Math.round((p.bytes / p.totalBytes) * 100) : 0);
+            update.progress = Math.min(99, pct);
             update.lastMessage = `Downloading… ${formatBytes(p.bytes)}`;
           }
           if (Object.keys(update).length > 0) {

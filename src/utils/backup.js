@@ -33,7 +33,7 @@ export const BACKUP_KEYS = [
   "subtitleLang",
   // Paths & folders
   "downloadPath",
-  "downloaderFolder",
+
   // Misc settings
   "invidiousBase",
   "autoCheckUpdates",
