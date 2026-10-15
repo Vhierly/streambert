@@ -43,6 +43,7 @@ const subtitlesIpc = require("./src/ipc/subtitles");
 const allmangaIpc = require("./src/ipc/allmanga");
 const playerIpc = require("./src/ipc/player");
 const discordRpc = require("./src/ipc/discordRpc");
+const reports = require("./src/ipc/reports");
 
 // -- Ad/tracker block list -----------------------------------------------------
 const BLOCKED_HOSTS = [
@@ -207,6 +208,7 @@ function createWindow() {
   storageIpc.applySecretMigrationIfNeeded();
   downloadsIpc.loadDownloads();
   blockStats.loadBlockStats();
+  reports.loadReports();
 
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -334,6 +336,7 @@ playerIpc.register(getMainWindow, {
   writeSecretMigration: storageIpc.writeSecretMigration,
 });
 blockStats.init(getMainWindow);
+reports.register(ipcMain);
 discordRpc.register(ipcMain);
 
 // get-block-stats lives with its data

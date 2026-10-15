@@ -38,10 +38,12 @@ import {
   SourceIcon,
   ShieldBlockIcon,
   PopOutIcon,
+  FlagIcon,
 } from "../components/Icons";
 import DownloadModal from "../components/DownloadModal";
 import TrailerModal from "../components/TrailerModal";
 import BlockedStatsModal from "../components/BlockedStatsModal";
+import ReportModal from "../components/ReportModal";
 import { useBlockedStats } from "../utils/useBlockedStats";
 import MediaCard from "../components/MediaCard";
 import {
@@ -89,6 +91,7 @@ export default function MoviePage({
   const [showDownload, setShowDownload] = useState(false);
   const [trailerKey, setTrailerKey] = useState(null);
   const [showTrailer, setShowTrailer] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
   const [m3u8Url, setM3u8Url] = useState(null);
   const [interceptedSubs, setInterceptedSubs] = useState([]);
   const [playerSource, setPlayerSource] = useState(
@@ -805,6 +808,10 @@ export default function MoviePage({
               {d.original_language && (
                 <span>{d.original_language?.toUpperCase()}</span>
               )}
+              <button className="detail-report-btn" onClick={() => setShowReportModal(true)} title="Report issue">
+                <FlagIcon size={13} />
+                Report
+              </button>
             </div>
             {rating.cert && (
               <div
@@ -1141,6 +1148,17 @@ export default function MoviePage({
               >
                 <PopOutIcon />
               </button>
+              {/* Report issue button */}
+              <button
+                className="player-overlay-btn"
+                onClick={() => {
+                  setShowSourceMenu(false);
+                  setShowReportModal(true);
+                }}
+                title="Report issue"
+              >
+                <FlagIcon />
+              </button>
             </div>
             {showSourceMenu && menuPos && (
               <div
@@ -1317,6 +1335,16 @@ export default function MoviePage({
           mediaType="movie"
           posterPath={d.poster_path}
           tmdbId={item.id}
+        />
+      )}
+
+      {showReportModal && (
+        <ReportModal
+          mediaType="movie"
+          tmdbId={item.id}
+          title={title}
+          sourceId={playerSource}
+          onClose={() => setShowReportModal(false)}
         />
       )}
     </div>
