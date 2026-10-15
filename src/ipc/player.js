@@ -52,6 +52,50 @@ function findTrustedUpdateSource(parsedUrl) {
   );
 }
 
+// ── Pure-Node mvhd duration parser ──────────────────────────────────────────
+// Replaces ffprobe for getting video duration. Parses the mvhd box from MP4/MOV
+// files. Returns duration in seconds, or 0 if not found.
+function parseMvhdDuration(filePath) {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    // Read first 64KB — mvhd is typically near the start
+    const buf = Buffer.alloc(65536);
+    const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+    const data = buf.subarray(0, bytesRead);
+
+    // Find mvhd box: size (4 bytes) + 'mvhd' (4 bytes)
+    for (let i = 0; i < data.length - 8; i++) {
+      if (
+        data[i + 4] === 0x6d && // m
+        data[i + 5] === 0x76 && // v
+        data[i + 6] === 0x68 && // h
+        data[i + 7] === 0x64    // d
+      ) {
+        const boxSize = data.readUInt32BE(i);
+        if (boxSize < 24) continue;
+
+        // mvhd v0: version(1) + flags(3) + creation(4) + modification(4) + timescale(4) + duration(4)
+        // mvhd v1: version(1) + flags(3) + creation(8) + modification(8) + timescale(4) + duration(8)
+        const version = data[i + 8];
+        let timescale, duration;
+        if (version === 1) {
+          timescale = data.readUInt32BE(i + 24);
+          duration = Number(data.readBigUInt64BE(i + 28));
+        } else {
+          timescale = data.readUInt32BE(i + 16);
+          duration = data.readUInt32BE(i + 20);
+        }
+        if (timescale > 0 && duration > 0) {
+          return duration / timescale;
+        }
+      }
+    }
+    return 0;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function register(getMainWindow, { writeSecretMigration }) {
   // ── Open file at specific timestamp in mpv / VLC ─────────────────────────
 
@@ -228,71 +272,19 @@ function register(getMainWindow, { writeSecretMigration }) {
 
   ipcMain.handle("get-platform", () => process.platform);
 
-  // ── Get video duration via ffprobe ────────────────────────────────────────
+  // ── Get video duration via pure-Node mvhd parse ───────────────────────────
   ipcMain.handle("get-video-duration", async (_, filePath) => {
     if (!filePath || typeof filePath !== "string") return { ok: false };
-    const platform = process.platform;
-
-    // Probe paths for ffprobe
-    const probePaths =
-      platform === "win32"
-        ? ["ffprobe", "C:\\ffmpeg\\bin\\ffprobe.exe"]
-        : platform === "darwin"
-          ? ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "ffprobe"]
-          : ["/usr/bin/ffprobe", "/usr/local/bin/ffprobe", "ffprobe"];
-
-    // Validate filePath exists and is a file before probing
     try {
       if (!fs.statSync(filePath).isFile()) return { ok: false };
     } catch {
       return { ok: false };
     }
 
-    for (const probe of probePaths) {
-      try {
-        const result = spawnSync(
-          probe,
-          [
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            filePath,
-          ],
-          { encoding: "utf8", timeout: 8000 },
-        );
-        if (result.status === 0) {
-          const secs = parseFloat(result.stdout.trim());
-          if (!isNaN(secs) && secs > 0) return { ok: true, duration: secs };
-        }
-      } catch {}
-    }
-
-    // Fallback: try ffmpeg -i and parse Duration line
-    const ffmpegPaths =
-      platform === "win32"
-        ? ["ffmpeg", "C:\\ffmpeg\\bin\\ffmpeg.exe"]
-        : platform === "darwin"
-          ? ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg"]
-          : ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg"];
-
-    for (const ff of ffmpegPaths) {
-      try {
-        const r = spawnSync(ff, ["-i", filePath], {
-          encoding: "utf8",
-          timeout: 8000,
-        });
-        const combined = (r.stdout || "") + (r.stderr || "");
-        const m = combined.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
-        if (m) {
-          const secs =
-            parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3]);
-          if (secs > 0) return { ok: true, duration: secs };
-        }
-      } catch {}
-    }
+    try {
+      const secs = parseMvhdDuration(filePath);
+      if (secs > 0) return { ok: true, duration: secs };
+    } catch {}
 
     return { ok: false };
   });

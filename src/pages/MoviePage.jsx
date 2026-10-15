@@ -1564,8 +1564,6 @@ export default function MoviePage({
           m3u8Url={m3u8Url}
           subtitles={interceptedSubs}
           mediaName={mediaName}
-          downloaderFolder={downloaderFolder}
-          setDownloaderFolder={handleSetDownloaderFolder}
           onOpenSettings={onSettings}
           onDownloadStarted={onDownloadStarted}
           mediaId={item.id}

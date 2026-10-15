@@ -171,8 +171,6 @@ export function clearFinished() {
 
 // ── Execution ────────────────────────────────────────────────────────────────
 
-// token is NOT persisted: it's minted per session by checkDownloader and bound
-// to a trusted binary path in the main process. We re-resolve it at start time.
 let _activeCount = 0;
 const _running = new Set();
 
@@ -210,7 +208,7 @@ export function canStartNow(settings = readSettings()) {
 
 /**
  * Start as many queued items as the concurrency budget allows.
- * `ctx` needs: { getToken(): Promise<string|null>, onStarted(entry, dl) }
+ * `ctx` needs: { onStarted(entry, dl) }
  */
 export async function pump(ctx) {
   if (!canStartNow()) return getQueue();
@@ -234,20 +232,7 @@ export async function pump(ctx) {
     });
 
     try {
-      const token = await ctx.getToken(next);
-      if (!token) {
-        updateQueueItem(next.key, {
-          status: QUEUE_STATUS.ERROR,
-          error: "Downloader binary not found — set the folder in Settings",
-          finishedAt: Date.now(),
-        });
-        _activeCount -= 1;
-        _running.delete(next.key);
-        continue;
-      }
-
       const result = await window.electron.runDownload({
-        token,
         m3u8Url: next.m3u8Url,
         subtitles: next.subtitles || [],
         name: next.name,
@@ -270,8 +255,6 @@ export async function pump(ctx) {
         updateQueueItem(next.key, { downloadId: result.id });
         ctx.onStarted?.(getQueue().find((q) => q.key === next.key), result);
         started += 1;
-        // The active slot is released by releaseSlot() when the download
-        // progress event reports a terminal state for this key.
       }
     } catch (err) {
       updateQueueItem(next.key, {

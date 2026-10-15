@@ -374,8 +374,6 @@ export default function DownloadModal({
   m3u8Url,
   subtitles = [],
   mediaName,
-  downloaderFolder,
-  setDownloaderFolder,
   onOpenSettings,
   onDownloadStarted,
   mediaId,
@@ -389,8 +387,6 @@ export default function DownloadModal({
     () => storage.get("downloadPath") || "",
   );
   const [settingPath, setSettingPath] = useState(false);
-  const [downloader, setDownloader] = useState(null);
-  const [checking, setChecking] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState(null);
   const [queued, setQueued] = useState(false);
   const [queuedNow, setQueuedNow] = useState(0);
@@ -427,29 +423,6 @@ export default function DownloadModal({
   const [showBrowser, setShowBrowser] = useState(false);
 
   const canSearchOS = isElectron && !!tmdbId;
-
-  const ua = navigator.userAgent.toLowerCase();
-  const binaryHint = ua.includes("win")
-    ? "Windows_x64-portable"
-    : ua.includes("mac")
-      ? "For MacOS you will have to compile it yourself"
-      : "Linux_x64-portable";
-  const releaseUrl =
-    "https://github.com/truelockmc/vid-dl-cli-only/releases/latest";
-
-  useEffect(() => {
-    if (!downloaderFolder || !isElectron) return;
-    let mounted = true;
-    setChecking(true);
-    window.electron.checkDownloader(downloaderFolder).then((result) => {
-      if (!mounted) return;
-      setDownloader(result);
-      setChecking(false);
-    });
-    return () => {
-      mounted = false;
-    };
-  }, [downloaderFolder]);
 
   const searchSubtitles = useCallback(
     async (lang) => {
@@ -500,10 +473,6 @@ export default function DownloadModal({
     searchSubtitles(defaultLang);
   }, [m3u8Url, subEnabled, wyzieApiKey]);
 
-  const pickBinaryFolder = async () => {
-    const folder = await window.electron.pickFolder();
-    if (folder) setDownloaderFolder(folder);
-  };
   const pickDownloadFolder = async () => {
     const folder = await window.electron.pickFolder();
     if (folder) {
@@ -514,7 +483,7 @@ export default function DownloadModal({
   };
 
   const handleDownload = async () => {
-    if (!downloader?.token || !downloadPath || !m3u8Url) return;
+    if (!downloadPath || !m3u8Url) return;
     setDownloadStatus("starting");
 
     let resolvedSubs = [...subtitles];
@@ -545,7 +514,6 @@ export default function DownloadModal({
     }
 
     const result = await window.electron.runDownload({
-      token: downloader.token,
       m3u8Url,
       subtitles: resolvedSubs,
       name: mediaName,
@@ -1080,129 +1048,20 @@ export default function DownloadModal({
                 )}
               </div>
 
-              {/* ── Downloader setup ──────────────────────────────────────── */}
-              {!downloader?.exists && (
-                <div className="download-instructions">
-                  <div className="download-instructions-title">
-                    Set up Video Downloader
-                  </div>
-                  <ol className="download-steps">
-                    <li>
-                      Download the latest release from{" "}
-                      <a
-                        className="download-link"
-                        href="#"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          isElectron &&
-                            window.electron.openExternal(releaseUrl);
-                        }}
-                      >
-                        github.com/truelockmc/vid-dl-cli-only/releases/latest
-                      </a>{" "}
-                      , for your OS: <code>{binaryHint}</code>
-                    </li>
-                    <li>Extract the release into a folder of your choice</li>
-                    <li>
-                      Select that folder below, it must contain{" "}
-                      <code>_internal</code> and the binary
-                    </li>
-                  </ol>
-                  <div className="download-folder-row">
-                    <button
-                      className="btn btn-secondary"
-                      onClick={pickBinaryFolder}
-                    >
-                      Choose folder …
-                    </button>
-                    {downloaderFolder && (
-                      <span className="download-folder-path">
-                        {downloaderFolder}
-                      </span>
-                    )}
-                  </div>
-                  {checking && (
-                    <div className="download-checking">
-                      <div
-                        className="spinner"
-                        style={{ width: 16, height: 16, borderWidth: 2 }}
-                      />{" "}
-                      Checking …
-                    </div>
-                  )}
-                  {!checking &&
-                    downloader &&
-                    !downloader.exists &&
-                    downloaderFolder && (
-                      <div className="download-error">
-                        {downloader.reason === "folder_permission" && (
-                          <>Permission denied, can't read the chosen folder.</>
-                        )}
-                        {downloader.reason === "folder_unreadable" && (
-                          <>Folder could not be read. Is it still accessible?</>
-                        )}
-                        {downloader.reason === "no_internal" && (
-                          <>
-                            Missing <code>_internal</code> folder. Extract the
-                            full release archive, not just the binary.
-                          </>
-                        )}
-                        {(downloader.reason === "no_executable" ||
-                          !downloader.reason) && (
-                          <>
-                            No executable binary found. On Linux, make sure the
-                            binary has execute permissions (
-                            <code>chmod +x</code>
-                            ).
-                          </>
-                        )}
-                      </div>
-                    )}
-                </div>
-              )}
-
-              {downloader?.exists && (
-                <div className="download-ready">
-                  <div className="download-found-badge">
-                    ✓ Video Downloader found
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 10,
-                      alignItems: "center",
-                      marginBottom: 14,
-                    }}
+              {/* ── Download actions ──────────────────────────────────── */}
+              {downloadStatus !== "ok" && (
+                <>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleDownload}
+                    disabled={downloadStatus === "starting"}
+                    style={{ width: "100%", justifyContent: "center" }}
                   >
-                    <span style={{ fontSize: 12, color: "var(--text3)" }}>
-                      Wrong binary folder?
-                    </span>
-                    <button
-                      className="btn btn-ghost"
-                      style={{ padding: "4px 10px", fontSize: 12 }}
-                      onClick={pickBinaryFolder}
-                    >
-                      Change
-                    </button>
-                  </div>
-
-                  {downloadStatus !== "ok" && (
-                    <button
-                      className="btn btn-primary"
-                      onClick={handleDownload}
-                      disabled={downloadStatus === "starting"}
-                      style={{ width: "100%", justifyContent: "center" }}
-                    >
-                      <DownloadIcon />
-                      {downloadStatus === "starting"
-                        ? "Starting …"
-                        : "Start Download"}
-                    </button>
-                  )}
-
-                  {/* Queue instead of starting now — lets you line up a whole
-                      season and control the order from the Downloads page. */}
+                    <DownloadIcon />
+                    {downloadStatus === "starting"
+                      ? "Starting …"
+                      : "Start Download"}
+                  </button>
                   <button
                     className="btn btn-ghost"
                     style={{ width: "100%", justifyContent: "center", marginTop: 8 }}
@@ -1218,30 +1077,9 @@ export default function DownloadModal({
                   >
                     {queued ? "Queued ✓" : "Add to queue"}
                   </button>
-
-                  {downloadStatus === "ok" && (
-                    <div style={{ textAlign: "center", padding: "12px 0" }}>
-                      <div
-                        className="download-success"
-                        style={{ fontSize: 15, marginBottom: 8 }}
-                      >
-                        ✓ Download started!
-                      </div>
-                      <button
-                        className="btn btn-ghost"
-                        style={{ fontSize: 13 }}
-                        onClick={onClose}
-                      >
-                        Close — track progress in Downloads
-                      </button>
-                    </div>
+                  {downloadStatus && downloadStatus !== "starting" && (
+                    <div className="download-error">{downloadStatus}</div>
                   )}
-                  {downloadStatus &&
-                    downloadStatus !== "ok" &&
-                    downloadStatus !== "starting" && (
-                      <div className="download-error">{downloadStatus}</div>
-                    )}
-
                   <div
                     style={{
                       display: "flex",
@@ -1261,6 +1099,16 @@ export default function DownloadModal({
                       Change
                     </button>
                   </div>
+                </>
+              )}
+              {downloadStatus === "ok" && (
+                <div style={{ textAlign: "center", padding: "12px 0" }}>
+                  <div className="download-success" style={{ fontSize: 15, marginBottom: 8 }}>
+                    ✓ Download started!
+                  </div>
+                  <button className="btn btn-ghost" style={{ fontSize: 13 }} onClick={onClose}>
+                    Close — track progress in Downloads
+                  </button>
                 </div>
               )}
             </>
