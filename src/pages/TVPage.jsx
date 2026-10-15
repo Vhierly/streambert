@@ -591,6 +591,14 @@ export default function TVPage({
     };
   }, [item.id, apiKey]);
 
+  // Auto-open trailer on detail pages when enabled in settings
+  useEffect(() => {
+    if (!trailerKey) return;
+    if (storage.get(STORAGE_KEYS.TRAILER_AUTOPLAY_ENABLED) === false) return;
+    setShowTrailer(true);
+  }, [trailerKey]);
+
+  // Fetch episode groups / seasons
   useEffect(() => {
     let mounted = true;
     fetchTVRating(item.id, apiKey, ratingCountry).then((r) => {

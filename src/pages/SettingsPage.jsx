@@ -3357,6 +3357,9 @@ export default function SettingsPage({
   const [autoplayNextLayout, setAutoplayNextLayout] = useState(
     () => storage.get(STORAGE_KEYS.AUTOPLAY_NEXT_LAYOUT) || "right",
   );
+  const [trailerAutoplayEnabled, setTrailerAutoplayEnabled] = useState(
+    () => storage.get(STORAGE_KEYS.TRAILER_AUTOPLAY_ENABLED) ?? true,
+  );
   const [saved, setSaved] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetHovered, setResetHovered] = useState(false);
@@ -3881,6 +3884,35 @@ export default function SettingsPage({
           </div>
 
           <Divider />
+
+          {/* Trailer Autoplay */}
+          <div style={{ marginBottom: 40 }}>
+            <div className="settings-section-title">Trailer Autoplay</div>
+            <div
+              style={{
+                fontSize: 13,
+                color: "var(--text3)",
+                marginBottom: 16,
+                lineHeight: 1.6,
+              }}
+            >
+              Automatically play the trailer (muted) when opening a movie or
+              TV show detail page.
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Toggle
+                value={trailerAutoplayEnabled}
+                onChange={(val) => {
+                  setTrailerAutoplayEnabled(val);
+                  storage.set(STORAGE_KEYS.TRAILER_AUTOPLAY_ENABLED, val);
+                  flash();
+                }}
+              />
+              <span style={{ fontSize: 13, color: "var(--text3)" }}>
+                {trailerAutoplayEnabled ? "Enabled" : "Disabled"}
+              </span>
+            </div>
+          </div>
 
           {/* Auto-Watched Threshold */}
           <div style={{ marginBottom: 40 }}>

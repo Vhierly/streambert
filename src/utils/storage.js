@@ -98,6 +98,8 @@ export const STORAGE_KEYS = {
   DISCORD_RPC_SHOW_BUTTON: "discordRpcShowButton",
   // Controller / gamepad navigation
   GAMEPAD_ENABLED: "gamepadEnabled",
+  // Trailer autoplay on detail pages
+  TRAILER_AUTOPLAY_ENABLED: "trailerAutoplayEnabled",
 };
 
 export const getApiKey = () => storage.get(STORAGE_KEYS.API_KEY);
