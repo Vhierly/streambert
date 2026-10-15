@@ -474,6 +474,9 @@ export default function TVPage({
     getSessionDomains: getBlockedDomains,
   } = useBlockedStats(blockedResetKey);
 
+  // Report modal
+  const [showReportModal, setShowReportModal] = useState(false);
+
   // Age rating
   const [rating, setRating] = useState({ cert: null, minAge: null });
   const ageLimitSetting = useMemo(() => getAgeLimitSetting(storage), []);
@@ -1700,6 +1703,10 @@ export default function TVPage({
                     </span>
                   )}
                   <span>{status}</span>
+                  <button className="detail-report-btn" onClick={() => setShowReportModal(true)} title="Report issue">
+                    <FlagIcon size={13} />
+                    Report
+                  </button>
                 </div>
                 {rating.cert && (
                   <div
@@ -2145,6 +2152,17 @@ export default function TVPage({
                       </span>
                     )}
                   </button>
+                  {/* Report issue button */}
+                  <button
+                    className="player-overlay-btn"
+                    onClick={() => {
+                      setShowSourceMenu(false);
+                      setShowReportModal(true);
+                    }}
+                    title="Report issue"
+                  >
+                    <FlagIcon />
+                  </button>
                   {/* Pop-out button */}
                   <button
                     className="player-overlay-btn"
@@ -2553,6 +2571,18 @@ export default function TVPage({
           sessionTotal={blockedSession}
           alltimeTotal={blockedAlltime}
           onClose={() => setShowBlockedModal(false)}
+        />
+      )}
+
+      {showReportModal && (
+        <ReportModal
+          mediaType="tv"
+          tmdbId={item.id}
+          title={title}
+          season={selectedSeason}
+          episode={selectedEp?.episode_number}
+          sourceId={playerSource}
+          onClose={() => setShowReportModal(false)}
         />
       )}
 
