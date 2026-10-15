@@ -10,7 +10,14 @@ import {
 import ErrorBoundary from "./components/ErrorBoundary";
 import KeyboardShortcutsModal from "./components/KeyboardShortcutsModal";
 import WindowTitlebar from "./components/WindowTitlebar";
-import { storage, secureStorage, STORAGE_KEYS } from "./utils/storage";
+import {
+  storage,
+  secureStorage,
+  STORAGE_KEYS,
+  getProfileData,
+  setProfileData,
+  clearProfileData,
+} from "./utils/storage";
 import {
   applyAccentColor,
   applyTheme,
@@ -84,6 +91,90 @@ export default function App() {
   const [trendingTV, setTrendingTV] = useState([]);
   const [loadingHome, setLoadingHome] = useState(false);
   const [offline, setOffline] = useState(() => !navigator.onLine);
+
+  // ── Multi-profile ─────────────────────────────────────────────────────────
+  const [profiles, setProfiles] = useState(() => {
+    const stored = storage.get(STORAGE_KEYS.PROFILES);
+    if (stored && Array.isArray(stored) && stored.length > 0) return stored;
+    // Migration: create default profile from existing single-user data
+    const defaultProfile = {
+      id: "default",
+      name: "Main",
+      color: "#e50914",
+      createdAt: Date.now(),
+    };
+    storage.set(STORAGE_KEYS.PROFILES, [defaultProfile]);
+    storage.set(STORAGE_KEYS.CURRENT_PROFILE, defaultProfile.id);
+    return [defaultProfile];
+  });
+  const [currentProfileId, setCurrentProfileId] = useState(() => {
+    return storage.get(STORAGE_KEYS.CURRENT_PROFILE) || "default";
+  });
+  const [showProfilePicker, setShowProfilePicker] = useState(false);
+
+  // Profile-scoped data loaders
+  const loadProfileData = useCallback((profileId) => {
+    return {
+      saved: getProfileData(profileId, "saved") || {},
+      savedOrder: getProfileData(profileId, "savedOrder") || null,
+      progress: getProfileData(profileId, "progress") || {},
+      history: getProfileData(profileId, "history") || [],
+      watched: getProfileData(profileId, "watched") || {},
+      librarySort: getProfileData(profileId, STORAGE_KEYS.LIBRARY_SORT) || "manual",
+    };
+  }, []);
+
+  // Load profile data when profile changes
+  useEffect(() => {
+    const data = loadProfileData(currentProfileId);
+    setSaved(data.saved);
+    setSavedOrder(data.savedOrder);
+    setProgress(data.progress);
+    setHistory(data.history);
+    setWatched(data.watched);
+    setLibrarySort(data.librarySort);
+  }, [currentProfileId, loadProfileData]);
+
+  const createProfile = useCallback(({ name, color }) => {
+    const newProfile = {
+      id: "p_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+      name,
+      color,
+      createdAt: Date.now(),
+    };
+    setProfiles((prev) => {
+      const next = [...prev, newProfile];
+      storage.set(STORAGE_KEYS.PROFILES, next);
+      return next;
+    });
+    setCurrentProfileId(newProfile.id);
+    storage.set(STORAGE_KEYS.CURRENT_PROFILE, newProfile.id);
+  }, []);
+
+  const switchProfile = useCallback((profileId) => {
+    setCurrentProfileId(profileId);
+    storage.set(STORAGE_KEYS.CURRENT_PROFILE, profileId);
+    // Reset navigation state
+    setPage("home");
+    setSelected(null);
+    setNavStack([]);
+  }, []);
+
+  const deleteProfile = useCallback((profileId) => {
+    if (profiles.length <= 1) return; // keep at least one
+    clearProfileData(profileId);
+    setProfiles((prev) => {
+      const next = prev.filter((p) => p.id !== profileId);
+      storage.set(STORAGE_KEYS.PROFILES, next);
+      return next;
+    });
+    if (currentProfileId === profileId) {
+      const remaining = profiles.filter((p) => p.id !== profileId);
+      const nextId = remaining[0]?.id || "default";
+      setCurrentProfileId(nextId);
+      storage.set(STORAGE_KEYS.CURRENT_PROFILE, nextId);
+    }
+  }, [profiles, currentProfileId]);
 
   // ── Player accent + subtitle lang ─────────────────────────────────────────
   // Computed once here and passed as a prop to MoviePage / TVPage so neither
@@ -810,23 +901,23 @@ export default function App() {
         setSavedOrder((prev) => {
           const currentOrder = prev || Object.keys(currentSaved);
           const newOrder = currentOrder.filter((k) => k !== id);
-          storage.set("savedOrder", newOrder);
+          setProfileData(currentProfileId, "savedOrder", newOrder);
           return newOrder;
-        });
-      } else {
-        next[id] = {
+          });
+          } else {
+          next[id] = {
           id: item.id,
           title: item.title || item.name,
           poster_path: item.poster_path,
           media_type: mt,
           vote_average: item.vote_average,
           year: (item.release_date || item.first_air_date || "").slice(0, 4),
-        };
-        showToast("Added to watchlist");
-        setSavedOrder((prev) => {
+          };
+          showToast("Added to watchlist");
+          setSavedOrder((prev) => {
           const currentOrder = prev || Object.keys(currentSaved);
           const newOrder = [...currentOrder, id];
-          storage.set("savedOrder", newOrder);
+          setProfileData(currentProfileId, "savedOrder", newOrder);
           return newOrder;
         });
       }

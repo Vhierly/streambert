@@ -25,6 +25,8 @@ export default function Sidebar({
   canGoBack,
   onBack,
   onShowShortcuts,
+  onShowProfilePicker,
+  currentProfile,
 }) {
   const [dragOver, setDragOver] = useState(null);
   const dragItem = useRef(null);
@@ -217,6 +219,21 @@ export default function Sidebar({
       )}
 
       <div className="sidebar-bottom">
+        {currentProfile && (
+          <button
+            className="sidebar-btn sidebar-profile-btn"
+            onClick={onShowProfilePicker}
+            title="Switch Profile"
+          >
+            <div
+              className="sidebar-profile-avatar"
+              style={{ background: currentProfile.color || "var(--accent, #e50914)" }}
+            >
+              {currentProfile.name.charAt(0).toUpperCase()}
+            </div>
+            <span className="tooltip">{currentProfile.name}</span>
+          </button>
+        )}
         <SideBtn
           onClick={onShowShortcuts}
           icon={<HelpIcon />}

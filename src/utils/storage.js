@@ -98,6 +98,10 @@ export const STORAGE_KEYS = {
   DISCORD_RPC_SHOW_BUTTON: "discordRpcShowButton",
   // Controller / gamepad navigation
   GAMEPAD_ENABLED: "gamepadEnabled",
+  // Trailer autoplay (muted inline on detail pages)
+  TRAILER_AUTOPLAY_ENABLED: "trailerAutoplayEnabled",
+  PROFILES: "profiles",
+  CURRENT_PROFILE: "currentProfile",
 };
 
 export const getApiKey = () => storage.get(STORAGE_KEYS.API_KEY);
@@ -132,6 +136,36 @@ export const clearFailoverSource = (epKey) => {
     storage.set(STORAGE_KEYS.SOURCE_FAILOVER_CACHE, cache);
   }
 };
+
+// ── Profile-scoped storage ──────────────────────────────────────────────────
+// All per-profile data is stored under a profile-prefixed key.
+// e.g. profile "abc123" → "streambert_p_abc123_saved"
+const PROFILE_PREFIX = "streambert_p_";
+
+export function getProfileKey(profileId, key) {
+  return PROFILE_PREFIX + profileId + "_" + key;
+}
+
+export function getProfileData(profileId, key) {
+  return storage.get(getProfileKey(profileId, key));
+}
+
+export function setProfileData(profileId, key, value) {
+  storage.set(getProfileKey(profileId, key), value);
+}
+
+export function removeProfileData(profileId, key) {
+  storage.remove(getProfileKey(profileId, key));
+}
+
+export function clearProfileData(profileId) {
+  try {
+    const prefix = PROFILE_PREFIX + profileId + "_";
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith(prefix))
+      .forEach((k) => localStorage.removeItem(k));
+  } catch {}
+}
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
