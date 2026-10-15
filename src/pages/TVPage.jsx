@@ -45,10 +45,12 @@ import {
   SourceIcon,
   ShieldBlockIcon,
   PopOutIcon,
+  FlagIcon,
 } from "../components/Icons";
 import DownloadModal from "../components/DownloadModal";
 import TrailerModal from "../components/TrailerModal";
 import BlockedStatsModal from "../components/BlockedStatsModal";
+import ReportModal from "../components/ReportModal";
 import { useBlockedStats } from "../utils/useBlockedStats";
 import {
   storage,
