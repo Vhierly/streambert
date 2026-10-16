@@ -1120,17 +1120,39 @@ ipcMain.on("player-stopped", () => {
   }
 });
 
+// -- Deep link protocol ──────────────────────────────────────────────────────
+if (!app.isDefaultProtocolClient("streambert")) {
+  app.setAsDefaultProtocolClient("streambert");
+}
+
+function extractDeepLink(argv) {
+  for (const arg of argv) {
+    if (arg.startsWith("streambert://")) return arg;
+  }
+  return null;
+}
+
+function sendDeepLink(url) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("deep-link", url);
+  }
+}
+
 // -- Desktop notifications -----------------------------------------------------
 // Called from the renderer whenever it wants a native OS notification.
 ipcMain.handle(
   "show-notification",
-  (_event, { title, body, silent = false }) => {
+  (_event, { title, body, silent = false, data }) => {
     try {
       if (!Notification.isSupported()) return;
       const n = new Notification({
         title: String(title),
         body: String(body),
         silent,
+        data,
+      });
+      n.on("click", () => {
+        if (data) sendDeepLink(data);
       });
       n.show();
     } catch {}
@@ -1255,12 +1277,22 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv) => {
+    const url = extractDeepLink(argv);
+    if (url) {
+      sendDeepLink(url);
+    }
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
   });
+
+  if (process.platform === "darwin") {
+    app.on("open-url", (_event, url) => {
+      sendDeepLink(url);
+    });
+  }
 
   app.whenReady().then(() => {
     _bench("app ready");

@@ -22,6 +22,12 @@ import {
   migrateLegacyToDefaultProfile,
 } from "./utils/storage";
 import {
+  shouldNotifyNewEpisode,
+  shouldScanForEpisodes,
+  newEpisodeDeepLink,
+  resolveDeepLink,
+} from "./utils/episodeNotifications";
+import {
   applyAccentColor,
   applyTheme,
   ACCENT_PRESETS,
@@ -294,16 +300,17 @@ export default function App() {
   // pill while checking, then either a result card or a brief "nothing new" message.
   useEffect(() => {
     if (!apiKeyLoaded) return;
-    const notifyPref = storage.get(STORAGE_KEYS.NOTIFY_NEW_EPISODE);
-    if (notifyPref === false || notifyPref === 0) return;
+    const notifyPref = getProfileData(
+      getCurrentProfileId(),
+      STORAGE_KEYS.NOTIFY_NEW_EPISODE,
+    );
+    if (!shouldScanForEpisodes(notifyPref)) return;
 
     let cancelled = false;
 
     async function checkNewEpisodes() {
-      // Small grace period so the UI has fully painted before start
       await new Promise((r) => setTimeout(r, 1200));
       if (cancelled) return;
-
       if (!apiKey || cancelled) return;
 
       const tvSeries = Object.values(saved).filter(
@@ -311,7 +318,6 @@ export default function App() {
       );
       if (!tvSeries.length) return;
 
-      // Only re-check entries older than 12 h
       const cache = storage.get(STORAGE_KEYS.EPISODE_RELEASE_CACHE) || {};
       const now = Date.now();
       const CACHE_TTL = 12 * 60 * 60 * 1000;
@@ -327,11 +333,9 @@ export default function App() {
         return;
       }
 
-      // Only show loading pill when there's actually something to check
       setEpisodeCheckStatus("checking");
 
       const BATCH = 3;
-      // Each entry: { title, season, id, seriesItem }
       const newEpisodeEntries = [];
 
       for (let i = 0; i < toCheck.length && !cancelled; i += BATCH) {
@@ -344,76 +348,23 @@ export default function App() {
 
               const prev = cache[series.id] || {};
               const lastEp = data.last_episode_to_air;
-              const lastDate = lastEp?.air_date || null;
-              const isFirstCheck = !prev.checkedAt;
 
-              // Parse air_date strings as local midnight to avoid UTC offset issues
-              const parseLocalDate = (d) => {
-                if (!d) return null;
-                const [y, m, day] = d.split("-").map(Number);
-                return new Date(y, m - 1, day);
-              };
-
-              const todayLocal = new Date();
-              todayLocal.setHours(0, 0, 0, 0);
-              const sevenDaysAgo = new Date(todayLocal);
-              sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-              if (isFirstCheck) {
-                // First time: notify if latest episode aired in last 7 days
-                const lastParsed = parseLocalDate(lastDate);
-                if (lastParsed && lastParsed >= sevenDaysAgo) {
-                  newEpisodeEntries.push({
-                    title:
-                      series.title ||
-                      series.name ||
-                      data.name ||
-                      "Unknown series",
-                    season: lastEp?.season_number ?? null,
-                    id: series.id,
-                    seriesItem: series,
-                  });
-                }
-              } else {
-                // Subsequent checks: notify when last_episode_to_air changed
-                // (new episode aired) compared to what got cached.
-                // Migration: old cache entries only have nextEpDate, not lastEpDate.
-                // In that case treat as first check to avoid false positives.
-                const prevLastDate = prev.lastEpDate ?? null;
-                const isMigratingOldCache =
-                  prev.checkedAt && prevLastDate === null;
-
-                if (isMigratingOldCache) {
-                  // Just update the cache with lastEpDat
-                } else {
-                  const lastParsed = parseLocalDate(lastDate);
-                  const prevParsed = parseLocalDate(prevLastDate);
-
-                  const isNewEpisode =
-                    lastDate &&
-                    lastDate !== prevLastDate &&
-                    lastParsed &&
-                    lastParsed >= sevenDaysAgo &&
-                    (!prevParsed || lastParsed > prevParsed);
-
-                  if (isNewEpisode) {
-                    newEpisodeEntries.push({
-                      title:
-                        series.title ||
-                        series.name ||
-                        data.name ||
-                        "Unknown series",
-                      season: lastEp?.season_number ?? null,
-                      id: series.id,
-                      seriesItem: series,
-                    });
-                  }
-                }
+              if (shouldNotifyNewEpisode(prev, lastEp, now)) {
+                newEpisodeEntries.push({
+                  title:
+                    series.title ||
+                    series.name ||
+                    data.name ||
+                    "Unknown series",
+                  season: lastEp?.season_number ?? null,
+                  id: series.id,
+                  seriesItem: series,
+                  url: newEpisodeDeepLink(series.id, lastEp?.season_number),
+                });
               }
 
               cache[series.id] = {
-                lastEpDate: lastDate,
-                // keep nextEpDate for reference but don't use it for detection
+                lastEpDate: lastEp?.air_date || null,
                 nextEpDate: data.next_episode_to_air?.air_date || null,
                 checkedAt: now,
               };
@@ -431,17 +382,14 @@ export default function App() {
 
       if (newEpisodeEntries.length === 0) {
         setEpisodeCheckStatus("none");
-        // Auto-dismiss after 2 s
         episodeDismissTimerRef.current = setTimeout(() => {
           if (!cancelled) setEpisodeCheckStatus(null);
         }, 2000);
         return;
       }
 
-      // Show in-app result card
       setEpisodeCheckStatus({ entries: newEpisodeEntries });
 
-      // Also fire OS notification
       if (window.electron?.showNotification) {
         const names = newEpisodeEntries.map((e) => e.title);
         const body =
@@ -454,6 +402,7 @@ export default function App() {
           title: "New episodes available",
           body,
           silent: false,
+          data: newEpisodeEntries[0]?.url,
         });
       }
     }
@@ -893,6 +842,17 @@ export default function App() {
     if (!gamepadConnected) gamepadToastedRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gamepadConnected, gamepadEnabled]);
+
+  // ── Deep links (streambert://show/<id>?season=<n>) ────────────────────────
+  useEffect(() => {
+    if (!window.electron?.onOpenDeepLink) return;
+    const handler = (url) => {
+      const item = resolveDeepLink(url, savedRef.current);
+      if (item) navigate("tv", item);
+    };
+    window.electron.onOpenDeepLink(handler);
+    return () => window.electron.offOpenDeepLink(handler);
+  }, [navigate]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const toastTimerRef = useRef(null);

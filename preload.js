@@ -107,8 +107,16 @@ contextBridge.exposeInMainWorld("electron", {
   offDnsAdblockApplied: (h) => ipcRenderer.removeListener("dns-adblock-applied", h),
 
   // Desktop notifications (triggered from renderer, executed in main)
-  showNotification: ({ title, body, silent }) =>
-    ipcRenderer.invoke("show-notification", { title, body, silent }),
+  showNotification: ({ title, body, silent, data }) =>
+    ipcRenderer.invoke("show-notification", { title, body, silent, data }),
+
+  // Deep link from OS (streambert://show/<id>)
+  onOpenDeepLink: (cb) => {
+    const h = (_, url) => cb(url);
+    ipcRenderer.on("deep-link", h);
+    return h;
+  },
+  offOpenDeepLink: (h) => ipcRenderer.removeListener("deep-link", h),
 
   // Quit app
   quitApp: () => ipcRenderer.invoke("quit-app"),
