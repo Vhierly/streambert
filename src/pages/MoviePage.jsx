@@ -223,9 +223,6 @@ export default function MoviePage({
     onGiveUp: handleGiveUp,
     resetKey: item.id,
   });
-  const [downloaderFolder, setDownloaderFolder] = useState(
-    () => storage.get("downloaderFolder") || "",
-  );
 
   // Blocked request stats
   const {
@@ -886,10 +883,6 @@ export default function MoviePage({
     };
   }, [playing]);
 
-  const handleSetDownloaderFolder = useCallback((folder) => {
-    setDownloaderFolder(folder);
-    storage.set("downloaderFolder", folder);
-  }, []);
 
   // Prefer AniList metadata for anime when available
   const displayOverview =
@@ -1564,8 +1557,6 @@ export default function MoviePage({
           m3u8Url={m3u8Url}
           subtitles={interceptedSubs}
           mediaName={mediaName}
-          downloaderFolder={downloaderFolder}
-          setDownloaderFolder={handleSetDownloaderFolder}
           onOpenSettings={onSettings}
           onDownloadStarted={onDownloadStarted}
           mediaId={item.id}

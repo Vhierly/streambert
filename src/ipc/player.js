@@ -52,6 +52,11 @@ function findTrustedUpdateSource(parsedUrl) {
   );
 }
 
+// ── Pure-Node mvhd duration parser ──────────────────────────────────────────
+// Replaces ffprobe for getting video duration. Parses the mvhd box from MP4/MOV
+// files. Returns duration in seconds, or 0 if not found.
+const { parseMvhdDuration } = require("./mvhd.js");
+
 function register(getMainWindow, { writeSecretMigration }) {
   // ── Open file at specific timestamp in mpv / VLC ─────────────────────────
 
@@ -228,71 +233,25 @@ function register(getMainWindow, { writeSecretMigration }) {
 
   ipcMain.handle("get-platform", () => process.platform);
 
-  // ── Get video duration via ffprobe ────────────────────────────────────────
+  // ── Get video duration via pure-Node mvhd parse ───────────────────────────
   ipcMain.handle("get-video-duration", async (_, filePath) => {
     if (!filePath || typeof filePath !== "string") return { ok: false };
-    const platform = process.platform;
-
-    // Probe paths for ffprobe
-    const probePaths =
-      platform === "win32"
-        ? ["ffprobe", "C:\\ffmpeg\\bin\\ffprobe.exe"]
-        : platform === "darwin"
-          ? ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "ffprobe"]
-          : ["/usr/bin/ffprobe", "/usr/local/bin/ffprobe", "ffprobe"];
-
-    // Validate filePath exists and is a file before probing
     try {
       if (!fs.statSync(filePath).isFile()) return { ok: false };
     } catch {
       return { ok: false };
     }
 
-    for (const probe of probePaths) {
-      try {
-        const result = spawnSync(
-          probe,
-          [
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            filePath,
-          ],
-          { encoding: "utf8", timeout: 8000 },
-        );
-        if (result.status === 0) {
-          const secs = parseFloat(result.stdout.trim());
-          if (!isNaN(secs) && secs > 0) return { ok: true, duration: secs };
-        }
-      } catch {}
-    }
-
-    // Fallback: try ffmpeg -i and parse Duration line
-    const ffmpegPaths =
-      platform === "win32"
-        ? ["ffmpeg", "C:\\ffmpeg\\bin\\ffmpeg.exe"]
-        : platform === "darwin"
-          ? ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg"]
-          : ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg"];
-
-    for (const ff of ffmpegPaths) {
-      try {
-        const r = spawnSync(ff, ["-i", filePath], {
-          encoding: "utf8",
-          timeout: 8000,
-        });
-        const combined = (r.stdout || "") + (r.stderr || "");
-        const m = combined.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
-        if (m) {
-          const secs =
-            parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3]);
-          if (secs > 0) return { ok: true, duration: secs };
-        }
-      } catch {}
-    }
+    try {
+      // MPEG-TS has no mvhd box — prefer the downloader's EXTINF sum.
+      if (path.extname(filePath).toLowerCase() === ".ts") {
+        const { getDownloadDuration } = require("./downloads");
+        const secs = getDownloadDuration(filePath);
+        if (secs > 0) return { ok: true, duration: secs };
+      }
+      const secs = parseMvhdDuration(filePath);
+      if (secs > 0) return { ok: true, duration: secs };
+    } catch {}
 
     return { ok: false };
   });

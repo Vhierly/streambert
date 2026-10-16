@@ -51,31 +51,16 @@ export default function DownloadQueuePanel({ onDownloadStarted, compact = false 
   const [playerPlaying, setPlayerPlaying] = useState(false);
   const pumpLock = useRef(false);
 
-  const downloaderFolder = storage.get("downloaderFolder") || "";
-
-  // Resolve a fresh downloader token per start — tokens are session-scoped and
-  // bound to a trusted binary path in the main process, so they must not be
-  // persisted in the queue.
-  const getToken = useCallback(async () => {
-    if (!downloaderFolder) return null;
-    try {
-      const res = await window.electron?.checkDownloader?.(downloaderFolder);
-      return res?.token ?? null;
-    } catch {
-      return null;
-    }
-  }, [downloaderFolder]);
-
   // Start the pump whenever a slot frees up.
   const runPump = useCallback(async () => {
     if (pumpLock.current) return;
     pumpLock.current = true;
     try {
-      await pump({ getToken, onStarted: onDownloadStarted });
+      await pump({ onStarted: onDownloadStarted });
     } finally {
       pumpLock.current = false;
     }
-  }, [getToken, onDownloadStarted]);
+  }, [onDownloadStarted]);
 
   // Requeue orphans left over from a previous session, and react when the
   // player starts/stops so "Don't disturb" actually holds the queue.
@@ -307,7 +292,6 @@ export default function DownloadQueuePanel({ onDownloadStarted, compact = false 
 // ── "Add to queue" button, reusable wherever a title has an m3u8 ──────────────
 export function AddToQueueButton({ item, label = "Add to queue" }) {
   const [added, setAdded] = useState(false);
-  const downloaderFolder = storage.get("downloaderFolder") || "";
 
   const handle = () => {
     if (!item?.m3u8Url) return;
@@ -335,12 +319,7 @@ export function AddToQueueButton({ item, label = "Add to queue" }) {
     <button
       className="btn btn-ghost"
       onClick={handle}
-      disabled={!downloaderFolder}
-      title={
-        downloaderFolder
-          ? "Queue this for download instead of starting it now"
-          : "Set a download folder in Settings first"
-      }
+      title="Queue this for download instead of starting it now"
     >
       {added ? "Queued ✓" : label}
     </button>

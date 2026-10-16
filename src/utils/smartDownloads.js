@@ -17,9 +17,6 @@ export function getSmartDownloadSettings() {
       scheduleEndHour: 6, // 6 AM
       maxConcurrent: 2,
       maxBandwidth: 0, // 0 = unlimited (MB/s)
-      autoConvert: false,
-      convertFormat: "h265", // h265, h264, aac
-      convertPreset: "medium", // fast, medium, slow
     };
   } catch {
     // Was `return getSmartDownloadSettings()` — that re-throws into the same
@@ -34,9 +31,6 @@ export function getSmartDownloadSettings() {
       scheduleEndHour: 6,
       maxConcurrent: 2,
       maxBandwidth: 0,
-      autoConvert: false,
-      convertFormat: "h265",
-      convertPreset: "medium",
     };
   }
 }
