@@ -28,12 +28,10 @@ const fs = require("fs");
 const PROBE_TARGETS = {
   videasy: "https://player.videasy.to/",
   vidsrc: "https://vsembed.su/",
-  vidking: "https://www.vidking.net/",
   vidlink: "https://vidlink.pro/",
   vidspark: "https://vidspark.to/",
   vidfast: "https://vidfast.vc/",
   vidcore: "https://vidcore.org/",
-  vidphantom: "https://vidphantom.com/",
   cinextream: "https://cinextream.cc/",
   vidsrc3: "https://vidsrc3.created.app/",
   hianime: "https://hianime.at/",

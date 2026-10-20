@@ -154,18 +154,6 @@ export const PLAYER_SOURCES = [
     movieUrl: (id) => `https://vsembed.su/embed/movie/${id}`,
     tvUrl: (id, season, ep) => `https://vsembed.su/embed/tv/${id}/${season}/${ep}`,
   },
-  {
-    id: "vidking",
-    label: "Vidking",
-    tag: null,
-    note: null,
-    supportsProgress: true,
-    colorParam: "color",
-    langParam: null,
-    params: { autoPlay: "true" },
-    movieUrl: (id) => `https://www.vidking.net/embed/movie/${id}`,
-    tvUrl: (id, season, ep) => `https://www.vidking.net/embed/tv/${id}/${season}/${ep}`,
-  },
   // ── Alternative embed providers (no API key required) ──────────────────────
   {
     id: "vidlink",
@@ -214,18 +202,6 @@ export const PLAYER_SOURCES = [
     params: {},
     movieUrl: (id) => `https://vidcore.org/embed/movie/${id}`,
     tvUrl: (id, season, ep) => `https://vidcore.org/embed/tv/${id}/${season}/${ep}`,
-  },
-  {
-    id: "vidphantom",
-    label: "VidPhantom",
-    tag: null,
-    note: null,
-    supportsProgress: true,
-    colorParam: "primaryColor",
-    langParam: null,
-    params: { autoplay: "true" },
-    movieUrl: (id) => `https://vidphantom.com/movie/${id}`,
-    tvUrl: (id, season, ep) => `https://vidphantom.com/tv/${id}/${season}/${ep}`,
   },
   {
     id: "cinextream",
@@ -388,7 +364,7 @@ export const getNextNonAsyncSource = (currentId) => {
 };
 
 // Sources that require a transparent webRequest intercept to load properly
-export const NEEDS_INTERCEPT = ["vidsrc", "vidlink", "vidspark", "vidfast", "vidcore", "vidphantom", "cinextream", "vidsrc3"];
+export const NEEDS_INTERCEPT = ["vidsrc", "vidlink", "vidspark", "vidfast", "vidcore", "cinextream", "vidsrc3"];
 
 /**
  * Get all available sources — built-in PLAYER_SOURCES + installed community addons.
