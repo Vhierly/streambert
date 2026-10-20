@@ -251,6 +251,11 @@ export async function pump(ctx) {
           error: result?.error || "Failed to start",
           finishedAt: Date.now(),
         });
+        // Release the slot we claimed above: a failed start must not leak an
+        // active count, otherwise the queue stalls permanently once enough
+        // starts fail.
+        _activeCount = Math.max(0, _activeCount - 1);
+        _running.delete(next.key);
       } else {
         updateQueueItem(next.key, { downloadId: result.id });
         ctx.onStarted?.(getQueue().find((q) => q.key === next.key), result);

@@ -440,9 +440,20 @@ function register(getMainWindow) {
           }
         } catch {}
       }
+      const dlDir = dlEntry?.downloadPath ? path.resolve(dlEntry.downloadPath) : null;
       for (const sp of dlEntry?.subtitlePaths || []) {
         try {
-          if (sp?.path && fs.existsSync(sp.path)) fs.unlinkSync(sp.path);
+          if (!sp?.path) continue;
+          const resolvedSp = path.resolve(sp.path);
+          // Only delete subtitle files that live inside this download's
+          // directory — guards against a tampered store pointing elsewhere.
+          if (
+            dlDir &&
+            (resolvedSp === dlDir || resolvedSp.startsWith(dlDir + path.sep)) &&
+            fs.existsSync(resolvedSp)
+          ) {
+            fs.unlinkSync(resolvedSp);
+          }
         } catch {}
       }
       const dlPath = dlEntry?.downloadPath;
@@ -460,10 +471,16 @@ function register(getMainWindow) {
       let deleted = 0,
         errors = 0;
       for (const dl of downloads) {
+        const dlDir = dl.downloadPath ? path.resolve(dl.downloadPath) : null;
         if (dl.filePath) {
           try {
-            if (fs.existsSync(dl.filePath)) {
-              fs.unlinkSync(dl.filePath);
+            const resolvedFp = path.resolve(dl.filePath);
+            const allowed =
+              !dlDir ||
+              resolvedFp === dlDir ||
+              resolvedFp.startsWith(dlDir + path.sep);
+            if (allowed && fs.existsSync(resolvedFp)) {
+              fs.unlinkSync(resolvedFp);
               deleted++;
             }
           } catch {
@@ -472,7 +489,13 @@ function register(getMainWindow) {
         }
         for (const sp of dl.subtitlePaths || []) {
           try {
-            if (sp?.path && fs.existsSync(sp.path)) fs.unlinkSync(sp.path);
+            if (!sp?.path) continue;
+            const resolvedSp = path.resolve(sp.path);
+            const allowed =
+              !dlDir ||
+              resolvedSp === dlDir ||
+              resolvedSp.startsWith(dlDir + path.sep);
+            if (allowed && fs.existsSync(resolvedSp)) fs.unlinkSync(resolvedSp);
           } catch {}
         }
       }

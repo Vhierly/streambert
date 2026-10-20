@@ -38,7 +38,7 @@ import {
   queueKey,
   QUEUE_STATUS,
 } from "./downloadQueue";
-import { storage, STORAGE_KEYS } from "./storage";
+import { storage, STORAGE_KEYS, secureStorage } from "./storage";
 import { getSmartDownloadSettings, shouldAutoDownload, isWithinSchedule, matchesQuality }
   from "./smartDownloads";
 
@@ -282,7 +282,11 @@ export function setEpisodeLister(fn) {
  * not end the pass over the rest of the library.
  */
 async function tmdbEpisodeLister(show) {
-  const apiKey = storage.get(STORAGE_KEYS.API_KEY);
+  // TMDB API key lives in OS-encrypted secure storage, not localStorage.
+  // Reading it from localStorage always returned null, which made the
+  // built-in episode lister return [] for every show (auto-download did
+  // nothing). Read it from the same place App.jsx writes it.
+  const apiKey = await secureStorage.get("apikey");
   if (!apiKey) return [];
 
   const showId = show?.tmdbId ?? show?.id;

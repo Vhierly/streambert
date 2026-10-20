@@ -91,7 +91,12 @@ export function analyzeWatchHistory(history) {
     // below is on item.*, so one bad entry throws and blanks the home screen
     // behind ErrorBoundary. Same guard style as taste.js pickBecauseYouWatched.
     if (!item) continue;
-    validCount++;
+    // A "watch" only counts when its timestamp actually parses — an
+    // unparseable watchedAt is not a real view, even though the entry itself
+    // is non-null and still contributes genres/ratings.
+    const watchedAtValid =
+      !!item.watchedAt && Number.isFinite(new Date(item.watchedAt).getTime());
+    if (watchedAtValid) validCount++;
 
     // Genre analysis
     for (const genre of item.genres || []) {
