@@ -47,7 +47,7 @@
     "appId": "com.truelockmc.streambert",
     "productName": "Streambert",
     "asar": true,
-    "compression": "normal",
+    "compression": "maximum",
     "directories": {
       "buildResources": "build"
     },
