@@ -74,6 +74,12 @@ export default function NativePlayer({
   );
   const videoRef = localVideoRef;
   const hlsRef = useRef(null);
+  const onReadyRef = useRef(onReady);
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onReadyRef.current = onReady;
+    onErrorRef.current = onError;
+  }, [onReady, onError]);
   const [levels, setLevels] = useState([]);
   const [level, setLevel] = useState(-1); // -1 = auto
   const [audioTracks, setAudioTracks] = useState([]);
@@ -142,7 +148,7 @@ export default function NativePlayer({
       // rejects play() issued during page load, and hls.js only reaches
       // MANIFEST_PARSED once the playlist has been fetched.
       video.play().catch(() => {});
-      onReady?.();
+      onReadyRef.current?.();
     };
 
     // Safari / iOS: native HLS, no library needed.
@@ -156,7 +162,7 @@ export default function NativePlayer({
         bail();
         setStatus("error");
         setErrorMsg("This source couldn't be played");
-        onError?.("native-hls-failed");
+        onErrorRef.current?.("native-hls-failed");
       };
       video.addEventListener("loadedmetadata", onLoaded);
       video.addEventListener("error", onErr);
@@ -166,7 +172,7 @@ export default function NativePlayer({
     if (!Hls.isSupported()) {
       setStatus("error");
       setErrorMsg("HLS playback isn't supported on this system");
-      onError?.("hls-unsupported");
+      onErrorRef.current?.("hls-unsupported");
       return;
     }
 
@@ -238,7 +244,7 @@ export default function NativePlayer({
         default:
           setStatus("error");
           setErrorMsg(data.details || "Playback failed");
-          onError?.(data.details || "fatal");
+          onErrorRef.current?.(data.details || "fatal");
       }
     });
 
@@ -251,7 +257,7 @@ export default function NativePlayer({
       } catch {}
       if (hlsRef.current === hls) hlsRef.current = null;
     };
-  }, [playing, effectiveSrc, retry, startTime, onReady, onError]);
+  }, [playing, effectiveSrc, retry, startTime]);
 
   // ── Report progress upward (matches the shape query-video-progress returns) ─
   const handleTimeUpdate = useCallback(() => {
