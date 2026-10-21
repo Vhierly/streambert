@@ -1362,13 +1362,16 @@ export default function MoviePage({
                   return (
                     <button
                       key={src.id}
+                      disabled={h === "down"}
                       className={
                         "source-dropdown__item" +
                         (playerSource === src.id
                           ? " source-dropdown__item--active"
-                          : "")
+                          : "") +
+                        (h === "down" ? " source-dropdown__item--disabled" : "")
                       }
                       onClick={() => {
+                        if (h === "down") return;
                         setShowSourceMenu(false);
                         setSourceNotice(null);
                         if (src.id === playerSource) return;
