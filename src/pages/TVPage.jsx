@@ -942,7 +942,7 @@ export default function TVPage({
         episodeNumber: epNum,
         translationType: dubMode,
       })
-      .then((res) => {
+      .then(async (res) => {
         if (!mounted) return;
         if (res?.ok && res.url) {
           clearFailoverSource(epKey);
@@ -1008,6 +1008,55 @@ export default function TVPage({
             })
             .catch((e) => console.warn("[hianime] native stream failed", e));
         } else {
+          // HiAnime had no match — try Miruro as an anime fallback.
+          try {
+            const mres = await window.electron.resolveMiruro({
+              title,
+              seasonNumber: selectedSeason,
+              episodeNumber: epNum,
+              translationType: dubMode,
+            });
+            if (mres?.ok && mres.url) {
+              clearFailoverSource(epKey);
+              window.electron
+                .hianimePlayerUrl({
+                  url: mres.url,
+                  masterUrl: mres.masterUrl,
+                  qualities: mres.qualities,
+                  referer: mres.referer,
+                  subtitles: mres.subtitles,
+                  startTime,
+                })
+                .then((r) => {
+                  if (!mounted) return;
+                  if (!r?.ok || !r.playerUrl) {
+                    setResolveError(r?.error || "Failed to start local player");
+                    return;
+                  }
+                  resolvedPlayerUrlRef.current = r.playerUrl;
+                  setResolvedPlayerUrl(r.playerUrl);
+                  setM3u8Url(mres.url);
+                })
+                .catch((e) => {
+                  if (mounted) setResolveError(e.message || "Failed to start local player");
+                });
+              window.electron
+                .hianimeNativeStream?.({
+                  url: mres.url,
+                  masterUrl: mres.masterUrl,
+                  qualities: mres.qualities,
+                  referer: mres.referer,
+                  subtitles: mres.subtitles,
+                })
+                .then((n) => {
+                  if (!mounted) return;
+                  if (n?.ok && n.src) setNativeStream(n);
+                })
+                .catch(() => {});
+              return;
+            }
+          } catch {}
+
           // HiAnime is the only anime source, so there is nothing to fail over
           // to — surface the resolver's own error, which carries the real
           // reason (episode not released, title not found, all servers failed).

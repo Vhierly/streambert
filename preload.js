@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld("electron", {
   // process, which is the only place that can attach the Referer the HLS CDN
   // requires (403 otherwise).
   resolveHianime: (args) => ipcRenderer.invoke("resolve-hianime", args),
+  resolveMiruro: (args) => ipcRenderer.invoke("resolve-miruro", args),
   searchHianime: (args) => ipcRenderer.invoke("search-hianime", args),
   hianimeEpisodes: (args) => ipcRenderer.invoke("hianime-episodes", args),
   hianimePlayerUrl: (args) => ipcRenderer.invoke("hianime-player-url", args),

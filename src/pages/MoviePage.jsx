@@ -468,7 +468,7 @@ export default function MoviePage({
         isMovie: true,
         translationType: dubMode,
       })
-      .then((res) => {
+      .then(async (res) => {
         if (!mounted) return;
         if (res?.ok && res.url) {
           clearFailoverSource(epKey);
@@ -504,6 +504,43 @@ export default function MoviePage({
             });
           return;
         }
+        // HiAnime had no match — try Miruro as an anime fallback before giving up.
+        try {
+          const mres = await window.electron.resolveMiruro({
+            title,
+            seasonNumber: 1,
+            episodeNumber: 1,
+            isMovie: true,
+            translationType: dubMode,
+          });
+          if (mres?.ok && mres.url) {
+            clearFailoverSource(epKey);
+            window.electron
+              .hianimePlayerUrl({
+                url: mres.url,
+                masterUrl: mres.masterUrl,
+                qualities: mres.qualities,
+                referer: mres.referer,
+                subtitles: mres.subtitles,
+                startTime,
+              })
+              .then((r) => {
+                if (!mounted) return;
+                if (!r?.ok || !r.playerUrl) {
+                  setResolveError(r?.error || "Failed to start local player");
+                  return;
+                }
+                resolvedPlayerUrlRef.current = r.playerUrl;
+                setResolvedPlayerUrl(r.playerUrl);
+                setM3u8Url(mres.url);
+              })
+              .catch((e) => {
+                if (mounted) setResolveError(e.message || "Failed to start local player");
+              });
+            return;
+          }
+        } catch {}
+
         // HiAnime has no match for this title. Fall back to a non-anime source
         // only when the user explicitly picked one; otherwise just report it.
         const currentSrc = allSources.find((s) => s.id === playerSource);
