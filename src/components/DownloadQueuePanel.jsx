@@ -16,6 +16,9 @@ import {
   setPriority,
   moveInQueue,
   clearFinished,
+  pauseQueueItem,
+  resumeQueueItem,
+  retryQueueItem,
   getQueueSettings,
   saveQueueSettings,
   pump,
@@ -38,6 +41,8 @@ function statusMeta(status) {
       return { label: "Failed", color: "#f59e0b" };
     case QUEUE_STATUS.CANCELLED:
       return { label: "Cancelled", color: "var(--text3)" };
+    case QUEUE_STATUS.PAUSED:
+      return { label: "Paused", color: "var(--text3)" };
     default:
       return { label: status, color: "var(--text3)" };
   }
@@ -97,12 +102,13 @@ export default function DownloadQueuePanel({ onDownloadStarted, compact = false 
     playerPlaying && settings.pauseWhilePlaying && pending.length > 0;
 
   const handleRetry = (entry) => {
-    updateQueueItem(entry.key, {
-      status: QUEUE_STATUS.QUEUED,
-      error: null,
-      finishedAt: null,
-      progress: 0,
-    });
+    setQueue([...retryQueueItem(entry.key)]);
+  };
+  const handlePause = (entry) => {
+    setQueue([...pauseQueueItem(entry.key)]);
+  };
+  const handleResume = (entry) => {
+    setQueue([...resumeQueueItem(entry.key)]);
   };
 
   const handleCancel = (entry) => {
@@ -261,8 +267,26 @@ export default function DownloadQueuePanel({ onDownloadStarted, compact = false 
                   >
                     {entry.priority > 0 ? `P${entry.priority}` : "Prioritise"}
                   </button>
+                  {(entry.status === QUEUE_STATUS.QUEUED ||
+                    entry.status === QUEUE_STATUS.DOWNLOADING) && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => handlePause(entry)}
+                    >
+                      Pause
+                    </button>
+                  )}
+                  {entry.status === QUEUE_STATUS.PAUSED && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => handleResume(entry)}
+                    >
+                      Resume
+                    </button>
+                  )}
                   {(entry.status === QUEUE_STATUS.ERROR ||
-                    entry.status === QUEUE_STATUS.CANCELLED) && (
+                    entry.status === QUEUE_STATUS.CANCELLED ||
+                    entry.status === QUEUE_STATUS.PAUSED) && (
                     <button
                       className="btn btn-ghost btn-sm"
                       onClick={() => handleRetry(entry)}

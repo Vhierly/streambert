@@ -21,6 +21,7 @@ export const QUEUE_STATUS = {
   DONE: "done",
   ERROR: "error",
   CANCELLED: "cancelled",
+  PAUSED: "paused",
 };
 
 const DEFAULT_SETTINGS = {
@@ -123,6 +124,40 @@ export function addToQueue(item, { priority = 0, posterPath = null, name } = {})
 export function removeFromQueue(key) {
   return writeQueue(getQueue().filter((q) => q.key !== key));
 }
+
+export function pauseQueueItem(key) {
+  const queue = getQueue();
+  const i = queue.findIndex((q) => q.key === key);
+  if (i === -1) return queue;
+  if (queue[i].status === QUEUE_STATUS.DOWNLOADING) {
+    // Best-effort: mark paused; the active slot is released by the caller.
+  }
+  queue[i].status = QUEUE_STATUS.PAUSED;
+  queue[i].lastMessage = "Paused";
+  return writeQueue(queue);
+}
+
+export function resumeQueueItem(key) {
+  const queue = getQueue();
+  const i = queue.findIndex((q) => q.key === key);
+  if (i === -1) return queue;
+  queue[i].status = QUEUE_STATUS.QUEUED;
+  queue[i].lastMessage = "Waiting…";
+  return writeQueue(queue);
+}
+
+export function retryQueueItem(key) {
+  const queue = getQueue();
+  const i = queue.findIndex((q) => q.key === key);
+  if (i === -1) return queue;
+  queue[i].status = QUEUE_STATUS.QUEUED;
+  queue[i].progress = 0;
+  queue[i].error = null;
+  queue[i].lastMessage = "Waiting…";
+  queue[i].finishedAt = null;
+  return writeQueue(queue);
+}
+
 
 export function updateQueueItem(key, patch) {
   const queue = getQueue();
