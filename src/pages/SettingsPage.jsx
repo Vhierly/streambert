@@ -8,6 +8,7 @@ import {
   clearAppCaches,
   getCurrentProfileId,
   getProfileDataOrLegacy,
+  getProfileData,
   setProfileData,
   removeProfileData,
 } from "../utils/storage";
