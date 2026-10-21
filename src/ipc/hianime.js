@@ -20,6 +20,9 @@
 // Verified end-to-end 2026-09-26: real MPEG-TS segments served without a proxy.
 //
 const { ipcMain } = require("electron");
+const fs = require("fs");
+let _hlsJs = "";
+try { _hlsJs = fs.readFileSync(require.resolve("hls.js/dist/hls.min.js"), "utf8"); } catch (e) { _hlsJs = ""; }
 const https = require("https");
 const http = require("http");
 
@@ -660,7 +663,7 @@ function getPlayerServer() {
           // with 'unsafe-eval' and no origin restriction, which Electron flags.
           "Content-Security-Policy": [
             "default-src 'none'",
-            `script-src 'self' https://cdn.jsdelivr.net 'nonce-${nonce}'`,
+            `script-src 'self' 'nonce-${nonce}'`,
             "style-src 'self' 'unsafe-inline'",
             "img-src 'self' data:",
             "media-src 'self' blob:",
@@ -801,7 +804,7 @@ body:hover #q,body:hover #qinfo{opacity:1}
 <div id="qinfo" class="off"></div>
 <select id="q" style="display:none" aria-label="Video quality"></select>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js"></script>
+<script nonce="${nonce}">${_hlsJs}</script>
 <script nonce="${nonce}">
   const video=document.getElementById('v');
   const src=new URLSearchParams(location.search).get('src')||'';
