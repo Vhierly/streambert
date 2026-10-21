@@ -54,6 +54,9 @@ import {
   getFailoverSource,
   setFailoverSource,
   clearFailoverSource,
+  getProfileDataOrLegacy,
+  setProfileData,
+  getCurrentProfileId,
 } from "../utils/storage";
 import {
   fetchMovieRating,
@@ -108,9 +111,7 @@ export default function MoviePage({
   const [interceptedSubs, setInterceptedSubs] = useState([]);
   const [playerSource, setPlayerSource] = useState(
     () => {
-      const saved = storage.get("playerSource");
-      // See TVPage: a remembered but no-longer-installed source id would make
-      // buildSourceUrl() return null and leave the player blank.
+      const saved = getProfileDataOrLegacy(STORAGE_KEYS.PLAYER_SOURCE);
       if (saved && getAllSources().some((s) => s.id === saved)) return saved;
       return NON_ANIME_DEFAULT_SOURCE;
     },
@@ -1378,7 +1379,7 @@ export default function MoviePage({
                         // Manual selection wins over auto-failover
                         clearFailoverSource(`movie_${item.id}_${dubMode}`);
                         setPlayerSource(src.id);
-                        storage.set(STORAGE_KEYS.PLAYER_SOURCE, src.id);
+                        setProfileData(getCurrentProfileId(), STORAGE_KEYS.PLAYER_SOURCE, src.id);
                         // Lock: user manually selected a source, don't override with auto-switch
                         userManualSelectionRef.current = true;
                         setM3u8Url(null);

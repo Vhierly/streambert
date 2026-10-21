@@ -65,6 +65,9 @@ import {
   getFailoverSource,
   setFailoverSource,
   clearFailoverSource,
+  getProfileDataOrLegacy,
+  setProfileData,
+  getCurrentProfileId,
 } from "../utils/storage";
 import { useAutoplay } from "../utils/useAutoplay";
 import { fetchAniSkipTimings } from "../utils/aniSkip";
@@ -425,7 +428,7 @@ export default function TVPage({
       window.removeEventListener("streambert:addons-changed", onAddonsChanged);
   }, []);
   const [playerSource, setPlayerSource] = useState(() => {
-    const saved = storage.get("playerSource");
+    const saved = getProfileDataOrLegacy(STORAGE_KEYS.PLAYER_SOURCE);
     // A remembered source can stop existing: an anime source that was removed,
     // or a community addon that was uninstalled. buildSourceUrl() returns null
     // for an unknown id, which leaves the player blank with no error, so only
@@ -2635,7 +2638,7 @@ export default function TVPage({
                             );
                           }
                           setPlayerSource(src.id);
-                          storage.set(STORAGE_KEYS.PLAYER_SOURCE, src.id);
+                          setProfileData(getCurrentProfileId(), STORAGE_KEYS.PLAYER_SOURCE, src.id);
                           // Lock: user manually selected a source, don't override with auto-switch
                           userManualSelectionRef.current = true;
                           setM3u8Url(null);
