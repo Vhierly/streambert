@@ -33,6 +33,7 @@ const PROBE_TARGETS = {
   cinextream: "https://cinextream.cc/",
   vidsrc3: "https://vidsrc3.created.app/",
   hianime: "https://hianime.at/",
+  zokoanime: "https://zokoanime.video/",
 };
 
 const PROBE_TIMEOUT_MS = 6000;

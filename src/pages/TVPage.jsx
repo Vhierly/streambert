@@ -932,6 +932,21 @@ export default function TVPage({
       resolvingUrlRef.current = false;
       return;
     }
+    // ZokoAnime iframe-based embed service
+    if (playerSource === "zokoanime") {
+      const title = item.name || item.title || "";
+      // Use MAL ID from anilistData if available, otherwise fall back to item.id
+      const malId = anilistData?.idMal || item.id || 0;
+      const track = dubMode ? "dub" : "sub";
+      const url = `https://zokoanime.video/stream/mal/${malId}/${epNum}/${track}`;
+      resolvedPlayerUrlRef.current = url;
+      setResolvedPlayerUrl(url);
+      setM3u8Url(null);
+      setNativeStream(null);
+      setResolvingUrl(false);
+      resolvingUrlRef.current = false;
+      return;
+    }
     // Use refs as guards
     if (resolvedPlayerUrlRef.current || resolvingUrlRef.current) return;
     resolvingUrlRef.current = true;

@@ -94,11 +94,9 @@ export function nextBestSource(fromId, { isAnime = false } = {}) {
   return candidates[0].id;
 }
 
-// HiAnime is the only anime source left. This list used to hold six ids for
-// sources that have all since been removed, which made isAnimeSource() return
-// false for everything — so nextBestSource() never preferred an anime source and
-// anime failover hopped onto whatever movie embed happened to rank highest.
-const ANIME_SOURCE_IDS = new Set(["hianime"]);
+// ZokoAnime is the new anime source; HiAnime remains as fallback.
+// Combined they cover all anime content via AniList-sourced IDs.
+const ANIME_SOURCE_IDS = new Set(["hianime", "zokoanime"]);
 
 export function isAnimeSource(id) {
   return ANIME_SOURCE_IDS.has(id);

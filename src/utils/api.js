@@ -238,6 +238,17 @@ export const PLAYER_SOURCES = [
     movieUrl: (_id) => "https://hianime.at",
     tvUrl: (_id, _season, _ep) => "https://hianime.at",
   },
+  {
+    id: "zokoanime",
+    label: "ZokoAnime",
+    tag: "ANIME",
+    note: null,
+    supportsProgress: true,
+    async: true,
+    params: { autoplay: "true" },
+    movieUrl: (_id) => "https://zokoanime.video",
+    tvUrl: (_id, _season, _ep) => "https://zokoanime.video",
+  },
 ];
 export const getSourceUrl = (
   sourceId,
