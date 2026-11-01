@@ -84,7 +84,12 @@ import {
   GAMEPAD_CLEANUP_JS,
 } from "../utils/playerGamepadScript";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
-import { initSourceHealth, refreshSourceHealth, rankSources } from "../utils/sourceHealth";
+import {
+  initSourceHealth,
+  refreshSourceHealth,
+  rankSources,
+  getHealthySourceOrDefault,
+} from "../utils/sourceHealth";
 import { useSourceRecovery } from "../utils/useSourceRecovery";
 import { announcePlayerState } from "../utils/downloadQueue";
 import PlayerControlBar from "../components/PlayerControlBar";

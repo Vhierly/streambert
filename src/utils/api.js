@@ -124,7 +124,6 @@ export const tmdbFetch = async (path, apiKey) => {
 // Documentation:
 // https://www.videasy.to/docs
 // https://vsembed.su/api/
-// https://www.vidking.net/#documentation
 
 // ── Player Sources ────────────────────────────────────────────────────────────
 // supportsProgress: true = executeJavaScript tracking works for this source

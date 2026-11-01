@@ -11,7 +11,7 @@ const REPORT_KINDS = new Set(["broken_stream", "wrong_metadata", "missing_subtit
 const MEDIA_TYPES = new Set(["movie", "tv"]);
 const NOTE_MAX_LEN = 1000;
 const REPORTS_CAP = 200;
-const VALID_SOURCES = new Set(["videasy", "vidsrc", "vidking", "allmanga"]);
+const VALID_SOURCES = new Set(["videasy", "vidsrc", "allmanga"]);
 
 let reports = [];
 let sourceHealth = {};

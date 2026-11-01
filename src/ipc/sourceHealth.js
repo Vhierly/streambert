@@ -19,10 +19,8 @@ const fs = require("fs");
 //
 // The host MUST match the one PLAYER_SOURCES actually loads. Probing a stale
 // domain reports a working source as flaky/down, which demotes it in the source
-// menu for no reason — that is worse than not probing at all. Five entries here
-// had drifted (vidfast.to vs vidfast.vc, vidcore.pw vs vidcore.org,
-// vidphantom.xyz vs .com, cinextream.to vs .cc, vidsrc3.to vs .created.app) and
-// six pointed at sources that no longer exist at all.
+// menu for no reason — that is worse than not probing at all. Seven entries here
+// had drifted or pointed at sources that no longer exist at all.
 //
 // test/health-sync.test.mjs fails if this list and PLAYER_SOURCES disagree.
 const PROBE_TARGETS = {

@@ -7,7 +7,7 @@
 // per-episode one. Both coexist — failover cache is per episode, health is
 // per host.
 
-import { PLAYER_SOURCES } from "./api";
+import { PLAYER_SOURCES } from "./api.js";
 
 const REFRESH_INTERVAL_MS = 30 * 60 * 1000; // re-probe every 30 min
 const STALE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -41,6 +41,33 @@ export function rankSources(sources = PLAYER_SOURCES, health = _health) {
     if (ra !== rb) return rb - ra; // healthier first
     return (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0);
   });
+}
+
+/**
+ * Pick a source to play: the preferred one if it is usable, otherwise the best
+ * healthy alternative. Returns null when nothing in the list is usable, so a
+ * caller can surface an error instead of silently reloading a dead host.
+ *
+ * "Usable" means up or unknown — a flaky host is not, because it has failed
+ * enough to be demoted and playing it again just burns another attempt.
+ */
+export function getHealthySourceOrDefault(
+  preferred,
+  sources = PLAYER_SOURCES,
+  health = _health,
+  { isAnime = false } = {},
+) {
+  const usable = healthySources(sources, health);
+  if (!usable.length) return null;
+  const pref = usable.find((s) => s.id === preferred);
+  if (pref) return pref.id;
+  // For anime titles prefer an anime source; the authored list order is the
+  // tiebreaker within a tier, so the first anime source is the intended one.
+  if (isAnime) {
+    const animeOnly = usable.filter((s) => isAnimeSource(s.id));
+    if (animeOnly.length) return animeOnly[0].id;
+  }
+  return usable[0].id;
 }
 
 /** Sources considered usable right now (not known-down, not flaky). */
