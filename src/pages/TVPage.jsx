@@ -938,13 +938,53 @@ export default function TVPage({
       // Use MAL ID from anilistData if available, otherwise fall back to item.id
       const malId = anilistData?.idMal || item.id || 0;
       const track = dubMode ? "dub" : "sub";
-      const url = `https://zokoanime.video/stream/mal/${malId}/${epNum}/${track}`;
+      const url = `https://zokoanime.video/stream/mal/${malId}/${epNum}/${track}?autoplay=1&autonext=1`;
       resolvedPlayerUrlRef.current = url;
       setResolvedPlayerUrl(url);
       setM3u8Url(null);
       setNativeStream(null);
       setResolvingUrl(false);
       resolvingUrlRef.current = false;
+
+      // ZokoAnime iframe player initialization
+      // The webview loads the embed page, and player events come via postMessage
+      // from the iframe to the webview's content. We inject a bridge that
+      // forwards them to the host via ipc-message.
+      const zokoWv = webviewRef.current;
+      if (zokoWv) {
+        const onZokoLoad = () => {
+          // Inject message bridge + send initial state request
+          setTimeout(() => {
+            if (!mounted) return;
+            zokoWv.executeJavaScript(`
+              (() => {
+                if (window.__zokoBridge) return;
+                window.__zokoBridge = true;
+                window.addEventListener('message', (e) => {
+                  const msg = e.data;
+                  if (!msg || msg.channel !== 'zokoanime') return;
+                  // Forward to host via ipc-message
+                  if (window.electron && window.electron.ipcRenderer) {
+                    window.electron.ipcRenderer.send('zokoanime-event', msg);
+                  }
+                });
+                // Ask the iframe for its initial state
+                const iframe = document.querySelector('iframe[src*="zokoanime"]');
+                if (iframe) {
+                  iframe.contentWindow.postMessage(
+                    { channel: "zokoanime", type: "state" },
+                    "https://zokoanime.video"
+                  );
+                }
+              })()
+            `);
+          }, 500);
+        };
+        zokoWv.addEventListener("did-finish-load", onZokoLoad);
+        // Cleanup on unmount
+        return () => zokoWv.removeEventListener("did-finish-load", onZokoLoad);
+      }
+
       return;
     }
     // Use refs as guards
@@ -1135,12 +1175,29 @@ export default function TVPage({
     }
     const wv = webviewRef.current;
     if (!wv) return;
+    if (playerSource === "zokoanime") {
+      // ZokoAnime iframe player: send seek command via postMessage
+      try {
+        await wv.executeJavaScript(`
+          (() => {
+            const iframe = document.querySelector('iframe[src*="zokoanime"]');
+            if (iframe) {
+              iframe.contentWindow.postMessage(
+                { channel: "zokoanime", type: "seek", time: ${time} },
+                "https://zokoanime.video"
+              );
+            }
+          })()
+        `);
+      } catch {}
+      return;
+    }
     try {
       await wv.executeJavaScript(
         `(() => { const v = document.querySelector('video'); if (v) v.currentTime = ${time}; })()`,
       );
     } catch {}
-  }, []);
+  }, [playerSource]);
 
   // Read playback position from whichever player is live, in the same shape the
   // progress/skip tick already consumes.
@@ -1565,6 +1622,42 @@ export default function TVPage({
     wv.addEventListener("did-finish-load", done);
     wv.addEventListener("did-fail-load", done);
 
+    // ZokoAnime iframe player communicates via postMessage with
+    // channel: "zokoanime". Listen for events and drive the UI from them.
+    const onZokoMessage = (e) => {
+      const msg = e.data;
+      if (!msg || msg.channel !== "zokoanime") return;
+      switch (msg.type) {
+        case "ready":
+        case "state":
+          setWebviewLoading(false);
+          if (msg.position != null) progressRef.current = msg.position;
+          if (msg.duration != null) durationRef.current = msg.duration;
+          break;
+        case "time":
+        case "watching-log":
+          if (msg.currentTime != null) progressRef.current = msg.currentTime;
+          if (msg.duration != null) durationRef.current = msg.duration;
+          break;
+        case "play":
+          setPlaying(true);
+          break;
+        case "pause":
+          setPlaying(false);
+          break;
+        case "ended":
+        case "complete":
+          setPlaying(false);
+          break;
+        case "error":
+          setResolveError(msg.message || "Playback error");
+          break;
+        default:
+          break;
+      }
+    };
+    wv.addEventListener("ipc-message", onZokoMessage);
+
     // Poll up to 30s for video duration (metadata may load after buffering starts)
     let attempts = 0;
     const pollDuration = setInterval(async () => {
@@ -1588,6 +1681,7 @@ export default function TVPage({
     return () => {
       wv.removeEventListener("did-finish-load", done);
       wv.removeEventListener("did-fail-load", done);
+      wv.removeEventListener("ipc-message", onZokoMessage);
       clearInterval(pollDuration);
     };
   }, [playing, playerSource, item.id, selectedEp?.episode_number]);
@@ -2494,7 +2588,16 @@ export default function TVPage({
                   }
                   partition="persist:player"
                   allowpopups="false"
-                  sandbox="allow-scripts allow-same-origin allow-forms"
+                  sandbox={
+                    playerSource === "zokoanime"
+                      ? ""
+                      : "allow-scripts allow-same-origin allow-forms"
+                  }
+                  allow={
+                    playerSource === "zokoanime"
+                      ? "autoplay; fullscreen; clipboard-write"
+                      : ""
+                  }
                   style={{
                     position: "absolute",
                     inset: 0,
