@@ -2821,6 +2821,10 @@ export default function TVPage({
           title={title}
           season={selectedSeason}
           episode={selectedEp?.episode_number || 1}
+          episodes={currentSeasonEpisodes || []}
+          fallbackDurationSec={
+            (selectedEp?.runtime || d?.episode_run_time?.[0] || 0) * 60
+          }
           maxEpisodes={currentSeasonEpisodes?.length || null}
           savedPct={
             progress?.[

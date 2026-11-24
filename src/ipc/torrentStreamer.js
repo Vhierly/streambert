@@ -4,7 +4,6 @@
 // (`AC3 / EAC3 / DTS / TrueHD / FLAC 5.1 → Stereo AAC`) with instant HTTP-Range
 // seeking so Blu-Ray `.mkv` & `.mp4` torrents always play with full sound.
 
-const { ipcMain } = require("electron");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
@@ -17,8 +16,38 @@ const DEFAULT_TRACKERS = [
   "udp://tracker.torrent.eu.org:451/announce",
   "udp://exodus.desync.com:6969/announce",
   "udp://open.demonii.com:1337/announce",
+  "udp://open.tracker.cl:1337/announce",
+  "udp://tracker.openbittorrent.com:6969/announce",
+  "udp://explodie.org:6969/announce",
+  "udp://tracker.moeking.me:6969/announce",
+  "udp://tracker.dler.org:6969/announce",
+  "udp://nyaa.tracker.wf:7777/announce",
+  "udp://p4p.arenabg.com:1337/announce",
+  "udp://tracker.cyberia.is:6969/announce",
+  "udp://tracker.tiny-vps.com:6969/announce",
+  "udp://retracker.lanta.me:2710/announce",
+  "udp://opentracker.io:6969/announce",
+  "http://tracker.opentrackr.org:1337/announce",
+  "http://tracker.openbittorrent.com:80/announce",
+  "http://nyaa.tracker.wf:7777/announce",
   "wss://tracker.openwebtorrent.com",
+  "wss://tracker.btorrent.xyz",
 ];
+
+function mergeMagnetTrackers(magnetUri) {
+  const set = new Set(DEFAULT_TRACKERS);
+  try {
+    const qIdx = String(magnetUri || "").indexOf("?");
+    if (qIdx !== -1) {
+      const params = new URLSearchParams(magnetUri.slice(qIdx + 1));
+      for (const tr of params.getAll("tr")) {
+        const clean = String(tr || "").trim();
+        if (clean) set.add(clean);
+      }
+    }
+  } catch {}
+  return Array.from(set);
+}
 
 const VIDEO_EXTS = new Set([
   ".mp4",
@@ -87,6 +116,17 @@ function parseFfmpegProbeOutput(stderrText) {
       Number(durMatch[1]) * 3600 +
       Number(durMatch[2]) * 60 +
       Number(durMatch[3]);
+  }
+  if (!durationSec) {
+    const tagDurMatch = /\bDURATION(?:-[a-zA-Z]+)?\s*:\s*(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/i.exec(
+      text,
+    );
+    if (tagDurMatch) {
+      durationSec =
+        Number(tagDurMatch[1]) * 3600 +
+        Number(tagDurMatch[2]) * 60 +
+        Number(tagDurMatch[3]);
+    }
   }
 
   let videoCodec = "h264";
@@ -160,10 +200,14 @@ function probeMediaViaFfmpeg(rawUrl, ffmpegBin) {
       ffmpegBin,
       [
         "-hide_banner",
+        "-seekable",
+        "1",
+        "-multiple_requests",
+        "1",
         "-analyzeduration",
-        "4000000",
+        "5000000",
         "-probesize",
-        "4000000",
+        "5000000",
         "-i",
         rawUrl,
       ],
@@ -178,7 +222,7 @@ function probeMediaViaFfmpeg(rawUrl, ffmpegBin) {
         } catch {}
         resolve(parseFfmpegProbeOutput(stderr));
       }
-    }, 9000);
+    }, 10000);
 
     proc.stderr.on("data", (chunk) => {
       stderr += chunk.toString("utf8");
@@ -285,11 +329,95 @@ function killActiveRemuxProcess(session) {
   }
 }
 
+function waitForOpeningPieces(engine, headPiece, tailPiece, maxWaitMs = 3500) {
+  return new Promise((resolve) => {
+    const hasBoth = () =>
+      Boolean(engine?.bitfield?.get(headPiece) && engine?.bitfield?.get(tailPiece));
+    if (hasBoth()) {
+      resolve();
+      return;
+    }
+    let done = false;
+    const startedAt = Date.now();
+    const finishWait = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try {
+        engine.removeListener("download", onDl);
+      } catch {}
+      resolve();
+    };
+    const onDl = () => {
+      if (hasBoth()) {
+        finishWait();
+      } else if (
+        engine?.bitfield?.get(headPiece) &&
+        Date.now() - startedAt >= 1600
+      ) {
+        finishWait();
+      }
+    };
+    engine.on("download", onDl);
+    const timer = setTimeout(finishWait, maxWaitMs);
+  });
+}
+
+function prioritizeByteWindow(session, bytePos, force = false) {
+  if (!session || session.stopped || !session.engine || !session.target) return;
+  const maxByte = Math.max(0, session.target.length - 1);
+  const clamped = Math.max(0, Math.min(Number(bytePos) || 0, maxByte));
+  if (
+    !force &&
+    session.lastWindowByte >= 0 &&
+    Math.abs(clamped - session.lastWindowByte) < 2 * 1024 * 1024
+  ) {
+    return;
+  }
+  session.lastWindowByte = clamped;
+
+  const absByte = (session.target.offset || 0) + clamped;
+  const startPiece = Math.max(
+    session.fileStartPiece,
+    Math.min(session.fileEndPiece, Math.floor(absByte / session.pieceLength)),
+  );
+  // Aggressively prebuffer 64 MB ahead of the current playback/seek point
+  const windowPieces = Math.max(
+    8,
+    Math.ceil((64 * 1024 * 1024) / session.pieceLength),
+  );
+  const endPiece = Math.min(session.fileEndPiece, startPiece + windowPieces - 1);
+
+  try {
+    if (session.readAheadSel) {
+      session.engine.deselect(
+        session.readAheadSel.from,
+        session.readAheadSel.to,
+        3,
+        session.readAheadSel.notify,
+      );
+      session.readAheadSel = null;
+    }
+    const notify = () => {};
+    session.engine.select(startPiece, endPiece, 3, notify);
+    session.readAheadSel = { from: startPiece, to: endPiece, notify };
+    session.engine.critical(
+      startPiece,
+      Math.min(12, endPiece - startPiece + 1),
+    );
+  } catch {}
+}
+
 async function stopActiveSession({ keepFiles = false } = {}) {
   const cur = activeSession;
   activeSession = null;
   if (!cur) return;
 
+  cur.stopped = true;
+  if (cur.reprobeTimer) {
+    clearTimeout(cur.reprobeTimer);
+    cur.reprobeTimer = null;
+  }
   killActiveRemuxProcess(cur);
 
   await new Promise((resolve) => {
@@ -315,7 +443,13 @@ async function stopActiveSession({ keepFiles = false } = {}) {
   }
 }
 
-function startTorrentSession({ magnet, fileIdx = null, season = null, episode = null }) {
+function startTorrentSession({
+  magnet,
+  fileIdx = null,
+  season = null,
+  episode = null,
+  hintDurationSec = 0,
+}) {
   return new Promise(async (resolve) => {
     if (!magnet || typeof magnet !== "string" || !magnet.startsWith("magnet:?")) {
       resolve({ ok: false, error: "Invalid magnet URI" });
@@ -351,10 +485,20 @@ function startTorrentSession({ magnet, fileIdx = null, season = null, episode = 
       engine = torrentStream(magnet, {
         tmp: tmpDir,
         path: tmpDir,
-        trackers: DEFAULT_TRACKERS,
+        trackers: mergeMagnetTrackers(magnet),
         dht: true,
+        tracker: true,
+        connections: 120,
+        uploads: 10,
         verify: false,
       });
+      // Open incoming TCP/swarm port & disable pulse throttling for high-bandwidth connections
+      try {
+        engine.listen(0);
+      } catch {}
+      try {
+        if (typeof engine.flood === "function") engine.flood();
+      } catch {}
     } catch (err) {
       safeRmDir(tmpDir);
       resolve({ ok: false, error: err.message || "Failed to initialize torrent" });
@@ -402,27 +546,35 @@ function startTorrentSession({ magnet, fileIdx = null, season = null, episode = 
         }
       }
 
-      // Prioritize opening 3 MB + tail 512 KB (for MP4 moov / MKV cues)
-      try {
-        const headEnd = Math.min(target.length - 1, 3 * 1024 * 1024);
-        const hs = target.createReadStream({ start: 0, end: headEnd });
-        hs.resume();
-        setTimeout(() => {
-          try {
-            hs.destroy();
-          } catch {}
-        }, 5000);
+      const pieceLength = Math.max(
+        16384,
+        Number(engine.torrent?.pieceLength) || 262144,
+      );
+      const fileStartPiece = Math.floor((target.offset || 0) / pieceLength);
+      const fileEndPiece = Math.floor(
+        ((target.offset || 0) + Math.max(1, target.length) - 1) / pieceLength,
+      );
 
-        if (target.length > 1024 * 1024) {
-          const tailStart = Math.max(0, target.length - 512 * 1024);
-          const ts = target.createReadStream({ start: tailStart, end: target.length - 1 });
-          ts.resume();
-          setTimeout(() => {
-            try {
-              ts.destroy();
-            } catch {}
-          }, 5000);
-        }
+      // Permanently prioritize first 4 MB (EBML/MP4 header) + last 2 MB (MP4 moov / MKV Cues seek index)
+      try {
+        const headPieces = Math.max(2, Math.ceil((4 * 1024 * 1024) / pieceLength));
+        const headEndPiece = Math.min(
+          fileEndPiece,
+          fileStartPiece + headPieces - 1,
+        );
+        engine.select(fileStartPiece, headEndPiece, 5);
+        engine.critical(
+          fileStartPiece,
+          Math.min(8, headEndPiece - fileStartPiece + 1),
+        );
+
+        const tailPieces = Math.max(2, Math.ceil((2 * 1024 * 1024) / pieceLength));
+        const tailStartPiece = Math.max(
+          fileStartPiece,
+          fileEndPiece - tailPieces + 1,
+        );
+        engine.select(tailStartPiece, fileEndPiece, 4);
+        engine.critical(tailStartPiece, fileEndPiece - tailStartPiece + 1);
       } catch {}
 
       const ext = path.extname(target.name).toLowerCase();
@@ -436,12 +588,23 @@ function startTorrentSession({ magnet, fileIdx = null, season = null, episode = 
         server: null,
         tmpDir,
         target,
+        pieceLength,
+        fileStartPiece,
+        fileEndPiece,
+        readAheadSel: null,
+        lastWindowByte: -1,
+        stopped: false,
+        reprobeTimer: null,
+        hintDurationSec: Math.max(0, Number(hintDurationSec) || 0),
         streamUrl: "",
         remuxBaseUrl: "",
         remuxProc: null,
         probe: { durationSec: 0, videoCodec: "h264", audioTracks: [], embeddedSubs: [] },
         mkvSubCache: new Map(),
       };
+
+      // Kick off initial 64 MB high-priority read-ahead window at byte 0
+      prioritizeByteWindow(sessionState, 0, true);
 
       const server = http.createServer((req, res) => {
         res.setHeader("Access-Control-Allow-Origin", "*");
@@ -494,6 +657,10 @@ function startTorrentSession({ magnet, fileIdx = null, season = null, episode = 
               "-hide_banner",
               "-loglevel",
               "error",
+              "-seekable",
+              "1",
+              "-multiple_requests",
+              "1",
               "-i",
               sessionState.streamUrl,
               "-map",
@@ -534,12 +701,29 @@ function startTorrentSession({ magnet, fileIdx = null, season = null, episode = 
           const startSec = Math.max(0, Number(reqUrl.searchParams.get("start") || 0));
           const audioIdx = Math.max(0, Number(reqUrl.searchParams.get("audio") || 0));
           const vCodec = sessionState.probe?.videoCodec || "h264";
+          const knownDur =
+            sessionState.probe?.durationSec || sessionState.hintDurationSec || 0;
+
+          if (startSec > 0 && knownDur > 0) {
+            const ratio = Math.min(0.98, Math.max(0, startSec / knownDur));
+            prioritizeByteWindow(
+              sessionState,
+              Math.floor(ratio * target.length),
+              true,
+            );
+          } else if (startSec === 0) {
+            prioritizeByteWindow(sessionState, 0, true);
+          }
 
           const args = ["-hide_banner", "-loglevel", "error"];
           if (startSec > 0) {
             args.push("-ss", String(startSec));
           }
           args.push(
+            "-seekable",
+            "1",
+            "-multiple_requests",
+            "1",
             "-i",
             sessionState.streamUrl,
             "-map",
@@ -633,7 +817,20 @@ function startTorrentSession({ magnet, fileIdx = null, season = null, episode = 
             return;
           }
 
+          // Slide the 64 MB high-priority window along active playback reads (ignore tiny tail index probes)
+          const isTailProbe = start > Math.max(0, total - 3 * 1024 * 1024);
+          if (!isTailProbe) {
+            prioritizeByteWindow(sessionState, start);
+          }
+
+          let cursor = start;
           const stream = target.createReadStream({ start, end });
+          if (!isTailProbe) {
+            stream.on("data", (chunk) => {
+              cursor += chunk.length;
+              prioritizeByteWindow(sessionState, cursor);
+            });
+          }
           req.on("close", () => {
             try {
               stream.destroy();
@@ -659,7 +856,12 @@ function startTorrentSession({ magnet, fileIdx = null, season = null, episode = 
           return;
         }
 
+        let cursor = 0;
         const stream = target.createReadStream();
+        stream.on("data", (chunk) => {
+          cursor += chunk.length;
+          prioritizeByteWindow(sessionState, cursor);
+        });
         req.on("close", () => {
           try {
             stream.destroy();
@@ -683,9 +885,40 @@ function startTorrentSession({ magnet, fileIdx = null, season = null, episode = 
         sessionState.remuxBaseUrl = remuxBaseUrl;
         activeSession = sessionState;
 
-        // Probe codec & tracks so we automatically remux AC3/EAC3/DTS/MKV audio to Stereo AAC!
+        // Wait briefly for prioritized header/tail pieces so FFmpeg immediately sees container duration & codecs
+        await waitForOpeningPieces(engine, fileStartPiece, fileEndPiece, 3500);
+
         const probe = await probeMediaViaFfmpeg(streamUrl, ffmpegBin);
         sessionState.probe = probe;
+
+        // If duration wasn't ready yet (e.g. slow initial peer on MP4 trailing moov), re-probe in background
+        if (!probe.durationSec && ffmpegBin) {
+          let attempts = 0;
+          const tryReprobe = async () => {
+            if (sessionState.stopped || activeSession !== sessionState) return;
+            attempts++;
+            const nextProbe = await probeMediaViaFfmpeg(streamUrl, ffmpegBin);
+            if (sessionState.stopped || activeSession !== sessionState) return;
+            if (nextProbe.durationSec > 0 || nextProbe.audioTracks.length > 0) {
+              sessionState.probe = {
+                durationSec: nextProbe.durationSec || sessionState.probe.durationSec,
+                videoCodec: nextProbe.videoCodec || sessionState.probe.videoCodec,
+                audioTracks:
+                  nextProbe.audioTracks.length > 0
+                    ? nextProbe.audioTracks
+                    : sessionState.probe.audioTracks,
+                embeddedSubs:
+                  nextProbe.embeddedSubs.length > 0
+                    ? nextProbe.embeddedSubs
+                    : sessionState.probe.embeddedSubs,
+              };
+            }
+            if (!sessionState.probe.durationSec && attempts < 4 && !sessionState.stopped) {
+              sessionState.reprobeTimer = setTimeout(tryReprobe, 5000);
+            }
+          };
+          sessionState.reprobeTimer = setTimeout(tryReprobe, 3500);
+        }
 
         const folderSubs = subFiles.map((sf, i) => ({
           url: `http://127.0.0.1:${port}/sub/${i}.vtt`,
@@ -710,7 +943,7 @@ function startTorrentSession({ magnet, fileIdx = null, season = null, episode = 
           streamUrl,
           remuxBaseUrl,
           useRemuxByDefault: !!(remuxBaseUrl && firstAudioNeedsRemux),
-          durationSec: probe.durationSec || 0,
+          durationSec: probe.durationSec || sessionState.hintDurationSec || 0,
           audioTracks: probe.audioTracks || [],
           fileName: target.name,
           fileSize: target.length,
@@ -726,7 +959,7 @@ function getActiveStatus() {
   if (!activeSession || !activeSession.engine) {
     return { active: false };
   }
-  const { engine, target, streamUrl } = activeSession;
+  const { engine, target, streamUrl, probe, hintDurationSec } = activeSession;
   const swarm = engine.swarm || {};
   const wires = Array.isArray(swarm.wires) ? swarm.wires : [];
   const activePeers = wires.filter((w) => !w.destroyed).length;
@@ -742,10 +975,13 @@ function getActiveStatus() {
     downloadSpeed: swarm.downloadSpeed ? swarm.downloadSpeed() : 0,
     uploadSpeed: swarm.uploadSpeed ? swarm.uploadSpeed() : 0,
     numPeers: activePeers,
+    durationSec: probe?.durationSec || hintDurationSec || 0,
+    audioTracks: probe?.audioTracks || [],
   };
 }
 
 function register() {
+  const { ipcMain } = require("electron");
   cleanStaleTempDirs();
 
   ipcMain.handle("start-torrent-stream", async (_, opts = {}) =>
@@ -765,5 +1001,6 @@ module.exports = {
   shutdown: () => stopActiveSession({ keepFiles: false }),
   selectTargetVideoFile,
   parseFfmpegProbeOutput,
+  mergeMagnetTrackers,
   resolveFfmpegPath,
 };

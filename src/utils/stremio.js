@@ -112,6 +112,21 @@ export function buildMagnetFromStream(stream, fallbackTitle = "") {
 }
 
 /**
+ * Extract seeder count from Stremio stream object or formatted description (`👤 240`, `🌱 240`, `Seeds: 240`).
+ */
+export function extractStreamSeeds(stream) {
+  if (typeof stream?.seeds === "number" && Number.isFinite(stream.seeds)) {
+    return stream.seeds;
+  }
+  if (typeof stream?.seeders === "number" && Number.isFinite(stream.seeders)) {
+    return stream.seeders;
+  }
+  const hay = `${stream?.title || ""} ${stream?.description || ""} ${stream?.name || ""}`;
+  const m = /(?:(?:👤|🌱)\s*|\bseeds?\s*[:=-]?\s*)(\d+)/iu.exec(hay);
+  return m ? Number(m[1]) : 0;
+}
+
+/**
  * Normalize raw streams returned by an addon into UI-ready items.
  */
 export function normalizeAddonStreams(rawStreams = [], addonName = "Addon", fallbackTitle = "") {
@@ -145,6 +160,7 @@ export function normalizeAddonStreams(rawStreams = [], addonName = "Addon", fall
 
       const rawLabel = String(s.title || s.description || s.name || "Stream").trim();
       const quality = detectStreamQuality(s);
+      const seeds = extractStreamSeeds(s);
 
       return {
         id: `${addonName}_${idx}_${s.infoHash || directUrl || externalUrl}`,
@@ -152,6 +168,7 @@ export function normalizeAddonStreams(rawStreams = [], addonName = "Addon", fall
         sourceLabel: String(s.name || addonName).replace(/\s+/g, " ").trim(),
         details: rawLabel,
         quality,
+        seeds,
         directUrl,
         externalUrl,
         magnetUrl,

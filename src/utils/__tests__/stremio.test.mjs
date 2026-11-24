@@ -6,6 +6,7 @@ import {
   validateStremioManifest,
   buildStremioStreamUrl,
   normalizeAddonStreams,
+  extractStreamSeeds,
   FEATURED_COMMUNITY_ADDONS,
 } from "../stremio.js";
 import {
@@ -188,4 +189,27 @@ test("parseSubtitleCues parses SRT and ASS dialogue cues and strips formatting t
   for (const addon of FEATURED_COMMUNITY_ADDONS) {
     assert.match(addon.manifestUrl, /^https:\/\/.+\/manifest\.json$/);
   }
+});
+
+test("extractStreamSeeds and parseFfmpegProbeOutput handle addon seed badges and MKV DURATION tags", () => {
+  assert.equal(
+    extractStreamSeeds({ title: "Movie 1080p BluRay\n👤 384 💾 2.4 GB ⚙️ YTS" }),
+    384,
+  );
+  assert.equal(extractStreamSeeds({ description: "🌱 92 · 1080p" }), 92);
+  assert.equal(extractStreamSeeds({ seeds: 510 }), 510);
+
+  const { parseFfmpegProbeOutput } = require("../../ipc/torrentStreamer.js");
+  const mkvProbe = parseFfmpegProbeOutput(`
+Input #0, matroska,webm, from 'http://127.0.0.1:55000/video/ep01.mkv':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0(jpn): Video: hevc (Main 10), yuv420p10le(tv), 1920x1080
+    Metadata:
+      DURATION        : 00:24:15.080000000
+  Stream #0:1(jpn): Audio: eac3, 48000 Hz, 5.1(side), fltp, 640 kb/s
+`);
+  assert.equal(Math.round(mkvProbe.durationSec), 24 * 60 + 15);
+  assert.equal(mkvProbe.videoCodec, "hevc");
+  assert.equal(mkvProbe.audioTracks.length, 1);
+  assert.equal(mkvProbe.audioTracks[0].needsRemux, true);
 });

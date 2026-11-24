@@ -1446,6 +1446,7 @@ export default function MoviePage({
           tmdbId={item.id}
           apiKey={apiKey}
           title={title}
+          fallbackDurationSec={totalSecs || 0}
           progressKey={progressKey}
           savedPct={progress?.[progressKey] || 0}
           onSaveProgress={saveProgress}

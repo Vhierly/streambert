@@ -84,6 +84,8 @@ export default function StremioStreamsModal({
   title,
   season = 1,
   episode = 1,
+  episodes = [],
+  fallbackDurationSec = 0,
   maxEpisodes = null,
   progressKey,
   savedPct = 0,
@@ -122,6 +124,8 @@ export default function StremioStreamsModal({
   const [remuxStartSec, setRemuxStartSec] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [currentTimeSec, setCurrentTimeSec] = useState(0);
+  const [scrubSec, setScrubSec] = useState(null);
+  const [isBufferingSeek, setIsBufferingSeek] = useState(false);
   const [nativeDurationSec, setNativeDurationSec] = useState(0);
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
@@ -152,6 +156,8 @@ export default function StremioStreamsModal({
   const hlsRef = useRef(null);
   const seekedInitialRef = useRef(false);
   const autoSwitchedAudioRef = useRef(false);
+  const isScrubbingRef = useRef(false);
+  const seekDebounceRef = useRef(null);
   const keepFilesRef = useRef(false);
   keepFilesRef.current = keepTorrentFiles;
 
@@ -181,17 +187,50 @@ export default function StremioStreamsModal({
       ? `tv_${tmdbId}_s${curSeason}e${curEpisode}`
       : progressKey || `movie_${tmdbId}`;
 
-  const totalDurationSec = useMemo(() => {
-    if (activeStream?.durationSec > 0) return activeStream.durationSec;
-    if (nativeDurationSec > 0 && Number.isFinite(nativeDurationSec)) {
-      return nativeDurationSec;
+  const effectiveFallbackDurationSec = useMemo(() => {
+    if (mediaType === "tv" && Array.isArray(episodes) && episodes.length > 0) {
+      const match = episodes.find(
+        (ep) => Number(ep?.episode_number) === Number(curEpisode),
+      );
+      if (match?.runtime > 0) return Number(match.runtime) * 60;
     }
-    return 0;
-  }, [activeStream, nativeDurationSec]);
+    return Number(fallbackDurationSec) > 0 ? Number(fallbackDurationSec) : 0;
+  }, [mediaType, episodes, curEpisode, fallbackDurationSec]);
+
+  const totalDurationSec = useMemo(() => {
+    let base = 0;
+    if (activeStream?.durationSec > 0) base = activeStream.durationSec;
+    else if (torrentStats?.durationSec > 0) base = torrentStats.durationSec;
+    else if (nativeDurationSec > 0 && Number.isFinite(nativeDurationSec)) {
+      base = nativeDurationSec;
+    } else if (effectiveFallbackDurationSec > 0) {
+      base = effectiveFallbackDurationSec;
+    }
+    if (base > 0 && currentTimeSec >= base - 5) {
+      return Math.max(base, Math.ceil(currentTimeSec + 60));
+    }
+    return base;
+  }, [
+    activeStream,
+    torrentStats?.durationSec,
+    nativeDurationSec,
+    effectiveFallbackDurationSec,
+    currentTimeSec,
+  ]);
+
+  const effectiveAudioTracks = useMemo(() => {
+    if (activeStream?.audioTracks?.length > 0) return activeStream.audioTracks;
+    if (torrentStats?.audioTracks?.length > 0) return torrentStats.audioTracks;
+    return [];
+  }, [activeStream, torrentStats?.audioTracks]);
 
   // Stop background torrent session when modal unmounts
   useEffect(() => {
     return () => {
+      if (seekDebounceRef.current) {
+        clearTimeout(seekDebounceRef.current);
+        seekDebounceRef.current = null;
+      }
       if (isElectron && window.electron?.stopTorrentStream) {
         window.electron.stopTorrentStream({ keepFiles: keepFilesRef.current });
       }
@@ -224,6 +263,13 @@ export default function StremioStreamsModal({
   }, [activeStream]);
 
   const stopCurrentPlayback = async () => {
+    if (seekDebounceRef.current) {
+      clearTimeout(seekDebounceRef.current);
+      seekDebounceRef.current = null;
+    }
+    isScrubbingRef.current = false;
+    setScrubSec(null);
+    setIsBufferingSeek(false);
     if (document.fullscreenElement) {
       try {
         await document.exitFullscreen();
@@ -244,12 +290,28 @@ export default function StremioStreamsModal({
     setActiveCueText("");
   };
 
+  const keyboardActionRef = useRef(null);
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape" && !document.fullscreenElement) {
         if (showSubSearch) setShowSubSearch(false);
         else if (activeStream) stopCurrentPlayback();
         else onClose?.();
+        return;
+      }
+      if (!activeStream) return;
+      const tag = e.target?.tagName || "";
+      if (/^(INPUT|TEXTAREA|SELECT)$/i.test(tag)) return;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        keyboardActionRef.current?.seekBy(-10);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        keyboardActionRef.current?.seekBy(10);
+      } else if (e.key === " ") {
+        e.preventDefault();
+        keyboardActionRef.current?.togglePlay();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -441,15 +503,19 @@ export default function StremioStreamsModal({
     setUseRemux(!!streamObj.useRemuxByDefault);
 
     // Resume from savedPct if duration is already known in remux mode
+    const resumeBaseDur = streamObj.durationSec || effectiveFallbackDurationSec || 0;
     const initStart =
       streamObj.useRemuxByDefault &&
-      streamObj.durationSec > 0 &&
+      resumeBaseDur > 0 &&
       savedPct > 2 &&
       savedPct < 94
-        ? Math.floor((savedPct / 100) * streamObj.durationSec)
+        ? Math.floor((savedPct / 100) * resumeBaseDur)
         : 0;
     setRemuxStartSec(initStart);
     setCurrentTimeSec(initStart);
+    setScrubSec(null);
+    setIsBufferingSeek(false);
+    isScrubbingRef.current = false;
     setNativeDurationSec(0);
     seekedInitialRef.current = initStart > 0;
     autoSwitchedAudioRef.current = false;
@@ -469,6 +535,7 @@ export default function StremioStreamsModal({
         fileIdx: stream.fileIdx ?? null,
         season: mediaType === "tv" ? curSeason : null,
         episode: mediaType === "tv" ? curEpisode : null,
+        hintDurationSec: effectiveFallbackDurationSec || 0,
       });
       if (!res?.ok) {
         setExtMsg(`⚠ ${res?.error || "Could not start torrent stream"}`);
@@ -595,23 +662,55 @@ export default function StremioStreamsModal({
     setSelectedSubId(id);
   };
 
-  const handleSeekTo = (targetSec) => {
+  const handleSeekTo = (targetSec, immediate = false) => {
+    const maxDur = totalDurationSec > 0 ? Math.max(0, totalDurationSec - 1) : 0;
     const clamped = Math.max(
       0,
-      totalDurationSec > 0 ? Math.min(targetSec, totalDurationSec - 1) : targetSec,
+      maxDur > 0 ? Math.min(targetSec, maxDur) : targetSec,
     );
     setCurrentTimeSec(clamped);
+
     if (useRemux && activeStream?.remuxBaseUrl) {
-      setRemuxStartSec(Math.floor(clamped));
+      setIsBufferingSeek(true);
+      if (seekDebounceRef.current) {
+        clearTimeout(seekDebounceRef.current);
+        seekDebounceRef.current = null;
+      }
+      if (immediate) {
+        setRemuxStartSec(Math.floor(clamped));
+      } else {
+        seekDebounceRef.current = setTimeout(() => {
+          seekDebounceRef.current = null;
+          setRemuxStartSec(Math.floor(clamped));
+        }, 200);
+      }
     } else if (videoRef.current) {
       videoRef.current.currentTime = clamped;
     }
+  };
+
+  keyboardActionRef.current = {
+    seekBy: (delta) => {
+      const base = scrubSec != null ? scrubSec : currentTimeSec;
+      handleSeekTo(base + delta, false);
+    },
+    togglePlay: () => {
+      const v = videoRef.current;
+      if (!v) return;
+      if (v.paused) v.play().catch(() => {});
+      else v.pause();
+    },
   };
 
   const handleTimeUpdate = (e) => {
     const v = e.currentTarget;
     if (v.duration && Number.isFinite(v.duration)) {
       setNativeDurationSec(v.duration);
+    }
+
+    // Do not snap timeline backward while user is dragging slider or waiting on debounced remux seek
+    if (isScrubbingRef.current || seekDebounceRef.current) {
+      return;
     }
 
     // Automatic silent-audio fallback: if playing raw stream for >1.5s and Chromium decoded 0 audio bytes, switch to FFmpeg Stereo AAC Remux!
@@ -627,6 +726,10 @@ export default function StremioStreamsModal({
       setRemuxStartSec(Math.floor(v.currentTime));
       setUseRemux(true);
       return;
+    }
+
+    if (isBufferingSeek && v.currentTime > 0.05) {
+      setIsBufferingSeek(false);
     }
 
     const actualSec = (useRemux ? remuxStartSec : 0) + (v.currentTime || 0);
@@ -1040,10 +1143,10 @@ export default function StremioStreamsModal({
                   </button>
                 )}
 
-                {activeStream.audioTracks?.length > 1 && (
+                {effectiveAudioTracks.length > 1 && (
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ color: "var(--text3)" }}>Audio:</span>
-                    {activeStream.audioTracks.map((at) => (
+                    {effectiveAudioTracks.map((at) => (
                       <button
                         key={at.audioIdx}
                         type="button"
@@ -1117,6 +1220,9 @@ export default function StremioStreamsModal({
                     else v.pause();
                   }}
                   onPlay={() => setIsPaused(false)}
+                  onPlaying={() => setIsBufferingSeek(false)}
+                  onCanPlay={() => setIsBufferingSeek(false)}
+                  onWaiting={() => setIsBufferingSeek(true)}
                   onPause={() => setIsPaused(true)}
                   onTimeUpdate={handleTimeUpdate}
                   onError={() =>
@@ -1131,6 +1237,26 @@ export default function StremioStreamsModal({
                     cursor: "pointer",
                   }}
                 />
+
+                {isBufferingSeek && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: 14,
+                      right: 14,
+                      padding: "4px 10px",
+                      borderRadius: 99,
+                      background: "rgba(0, 0, 0, 0.72)",
+                      border: "1px solid rgba(255,255,255,0.16)",
+                      color: "#fff",
+                      fontSize: 11.5,
+                      pointerEvents: "none",
+                      zIndex: 12,
+                    }}
+                  >
+                    ⏳ Buffering target scene…
+                  </div>
+                )}
 
                 {/* Crisp Custom Subtitle Overlay */}
                 {activeCueText && selectedSubId !== "off" && (
@@ -1186,18 +1312,43 @@ export default function StremioStreamsModal({
                       minWidth: 44,
                     }}
                   >
-                    {formatClock(currentTimeSec)}
+                    {formatClock(scrubSec != null ? scrubSec : currentTimeSec)}
                   </span>
                   <input
                     type="range"
                     min={0}
-                    max={Math.max(1, Math.floor(totalDurationSec || 100))}
+                    max={Math.max(1, Math.floor(totalDurationSec || 7200))}
                     value={Math.min(
-                      Math.floor(totalDurationSec || 100),
-                      Math.floor(currentTimeSec),
+                      Math.max(1, Math.floor(totalDurationSec || 7200)),
+                      Math.floor(scrubSec != null ? scrubSec : currentTimeSec),
                     )}
-                    disabled={!totalDurationSec}
-                    onChange={(e) => handleSeekTo(Number(e.target.value))}
+                    onPointerDown={() => {
+                      isScrubbingRef.current = true;
+                    }}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      if (isScrubbingRef.current) {
+                        setScrubSec(val);
+                      } else {
+                        handleSeekTo(val, false);
+                      }
+                    }}
+                    onPointerUp={(e) => {
+                      if (isScrubbingRef.current) {
+                        isScrubbingRef.current = false;
+                        const val = Number(e.currentTarget.value);
+                        setScrubSec(null);
+                        handleSeekTo(val, true);
+                      }
+                    }}
+                    onLostPointerCapture={(e) => {
+                      if (isScrubbingRef.current) {
+                        isScrubbingRef.current = false;
+                        const val = Number(e.currentTarget.value);
+                        setScrubSec(null);
+                        handleSeekTo(val, true);
+                      }
+                    }}
                     style={{ flex: 1, accentColor: "var(--red)", cursor: "pointer" }}
                   />
                   <span
@@ -1209,7 +1360,7 @@ export default function StremioStreamsModal({
                       textAlign: "right",
                     }}
                   >
-                    {totalDurationSec ? formatClock(totalDurationSec) : "LIVE"}
+                    {totalDurationSec ? formatClock(totalDurationSec) : "2:00:00"}
                   </span>
                 </div>
 
@@ -1241,7 +1392,12 @@ export default function StremioStreamsModal({
                       type="button"
                       className="btn btn-ghost"
                       style={{ height: 28, padding: "0 8px", fontSize: 11.5 }}
-                      onClick={() => handleSeekTo(currentTimeSec - 10)}
+                      onClick={() =>
+                        handleSeekTo(
+                          (scrubSec != null ? scrubSec : currentTimeSec) - 10,
+                          false,
+                        )
+                      }
                     >
                       -10s
                     </button>
@@ -1249,7 +1405,12 @@ export default function StremioStreamsModal({
                       type="button"
                       className="btn btn-ghost"
                       style={{ height: 28, padding: "0 8px", fontSize: 11.5 }}
-                      onClick={() => handleSeekTo(currentTimeSec + 10)}
+                      onClick={() =>
+                        handleSeekTo(
+                          (scrubSec != null ? scrubSec : currentTimeSec) + 10,
+                          false,
+                        )
+                      }
                     >
                       +10s
                     </button>
@@ -1836,6 +1997,24 @@ export default function StremioStreamsModal({
                               >
                                 {s.sourceLabel}
                               </span>
+                              {s.seeds > 0 && (
+                                <span
+                                  style={{
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    padding: "1px 7px",
+                                    borderRadius: 4,
+                                    background:
+                                      s.seeds >= 30
+                                        ? "rgba(72, 199, 116, 0.14)"
+                                        : "rgba(255, 183, 77, 0.14)",
+                                    color: s.seeds >= 30 ? "#48c774" : "#ffb74d",
+                                  }}
+                                  title="Active seeders — higher seeders = faster 500 Mbps speed"
+                                >
+                                  🌱 {s.seeds}
+                                </span>
+                              )}
                               <span style={{ fontSize: 11.5, color: "var(--text3)" }}>
                                 · {s.addonName}
                               </span>
