@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { storage, secureStorage, STORAGE_KEYS } from "../utils/storage";
+import { storage, secureStorage, STORAGE_KEYS, isElectron } from "../utils/storage";
 import { tmdbFetch } from "../utils/api";
 import {
+  TRAKT_PKCE_REDIRECT_URI,
+  getActiveTraktAuth,
   verifyAnilistToken,
   pullAnilistWatchlist,
   verifyTraktCredentials,
@@ -83,6 +85,7 @@ async function mergeImportedCandidates(candidates, apiKey, onProgress) {
 }
 
 export default function AccountSyncSection({ apiKey }) {
+  const [anilistClientId, setAnilistClientId] = useState("");
   const [anilistToken, setAnilistToken] = useState("");
   const [anilistEnabled, setAnilistEnabled] = useState(
     () => !!storage.get(STORAGE_KEYS.ANILIST_SYNC_ENABLED),
@@ -90,11 +93,12 @@ export default function AccountSyncSection({ apiKey }) {
   const [anilistMsg, setAnilistMsg] = useState(null);
 
   const [traktClientId, setTraktClientId] = useState("");
-  const [traktToken, setTraktToken] = useState("");
+  const [traktConnectedUser, setTraktConnectedUser] = useState(null);
   const [traktEnabled, setTraktEnabled] = useState(
     () => !!storage.get(STORAGE_KEYS.TRAKT_SYNC_ENABLED),
   );
   const [traktMsg, setTraktMsg] = useState(null);
+  const [copiedUri, setCopiedUri] = useState(false);
 
   const [importMsg, setImportMsg] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -105,12 +109,18 @@ export default function AccountSyncSection({ apiKey }) {
     Promise.all([
       secureStorage.get(STORAGE_KEYS.ANILIST_TOKEN),
       secureStorage.get(STORAGE_KEYS.TRAKT_CLIENT_ID),
-      secureStorage.get(STORAGE_KEYS.TRAKT_TOKEN),
-    ]).then(([al, tCid, tTok]) => {
+      getActiveTraktAuth(),
+    ]).then(async ([al, savedCid, traktAuth]) => {
       if (!mounted) return;
       if (al) setAnilistToken(al);
-      if (tCid) setTraktClientId(tCid);
-      if (tTok) setTraktToken(tTok);
+      if (savedCid) setTraktClientId(savedCid);
+      if (traktAuth?.clientId && traktAuth?.token) {
+        setTraktClientId(traktAuth.clientId);
+        try {
+          const u = await verifyTraktCredentials(traktAuth);
+          if (mounted && u?.username) setTraktConnectedUser(u.username);
+        } catch {}
+      }
     });
     return () => {
       mounted = false;
@@ -169,27 +179,29 @@ export default function AccountSyncSection({ apiKey }) {
     }
   };
 
-  const handleSaveTrakt = async () => {
+  const handleTraktSignIn = async () => {
+    const cid = traktClientId.trim();
+    if (!cid || !window.electron?.traktPkceLogin) return;
     setBusy(true);
-    setTraktMsg(null);
+    setTraktMsg({
+      ok: true,
+      text: "Browser opened — please click Approve on Trakt…",
+    });
     try {
-      const cid = traktClientId.trim();
-      const tok = traktToken.trim();
-      await secureStorage.set(STORAGE_KEYS.TRAKT_CLIENT_ID, cid);
-      await secureStorage.set(STORAGE_KEYS.TRAKT_TOKEN, tok);
-      if (!cid || !tok) {
-        storage.set(STORAGE_KEYS.TRAKT_SYNC_ENABLED, false);
-        setTraktEnabled(false);
-        setTraktMsg({ ok: true, text: "Trakt credentials cleared." });
-      } else {
-        const user = await verifyTraktCredentials({ clientId: cid, token: tok });
-        storage.set(STORAGE_KEYS.TRAKT_SYNC_ENABLED, true);
-        setTraktEnabled(true);
-        setTraktMsg({
-          ok: true,
-          text: `✓ Connected as ${user?.username || "Trakt user"}`,
-        });
-      }
+      const res = await window.electron.traktPkceLogin(cid);
+      if (!res?.ok) throw new Error(res?.error || "PKCE sign-in failed");
+      const user = await verifyTraktCredentials({
+        clientId: res.clientId,
+        token: res.accessToken,
+      });
+      const username = user?.username || "Trakt user";
+      setTraktConnectedUser(username);
+      setTraktEnabled(true);
+      storage.set(STORAGE_KEYS.TRAKT_SYNC_ENABLED, true);
+      setTraktMsg({
+        ok: true,
+        text: `✓ Signed in as ${username} (PKCE auto-refresh enabled)`,
+      });
     } catch (e) {
       setTraktMsg({ ok: false, text: e.message });
     } finally {
@@ -197,15 +209,22 @@ export default function AccountSyncSection({ apiKey }) {
     }
   };
 
+  const handleTraktDisconnect = async () => {
+    await window.electron?.traktLogout?.();
+    setTraktConnectedUser(null);
+    setTraktEnabled(false);
+    storage.set(STORAGE_KEYS.TRAKT_SYNC_ENABLED, false);
+    setTraktMsg({ ok: true, text: "Disconnected from Trakt." });
+  };
+
   const handlePullTrakt = async () => {
-    if (!traktClientId.trim() || !traktToken.trim() || !apiKey) return;
+    if (!apiKey) return;
     setBusy(true);
     setTraktMsg({ ok: true, text: "Fetching Trakt watchlist…" });
     try {
-      const entries = await pullTraktWatchlist({
-        clientId: traktClientId.trim(),
-        token: traktToken.trim(),
-      });
+      const auth = await getActiveTraktAuth();
+      if (!auth) throw new Error("Please sign in with Trakt first");
+      const entries = await pullTraktWatchlist(auth);
       const added = await mergeImportedCandidates(
         entries,
         apiKey,
@@ -270,11 +289,11 @@ export default function AccountSyncSection({ apiKey }) {
         }}
       >
         Sync watched episodes and movies directly with AniList or Trakt.tv
-        (tokens are encrypted locally via your OS keychain), or import existing
-        lists from IMDb CSV, Letterboxd CSV, or MyAnimeList XML.
+        (tokens are encrypted via your OS keychain), or import existing lists
+        from IMDb CSV, Letterboxd CSV, or MyAnimeList XML.
       </div>
 
-      {/* AniList Card */}
+      {/* ── AniList Card ── */}
       <div
         style={{
           background: "var(--surface)",
@@ -287,7 +306,7 @@ export default function AccountSyncSection({ apiKey }) {
           gap: 10,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 14, fontWeight: 600 }}>AniList 2-Way Sync</span>
           <label style={{ fontSize: 12, color: "var(--text2)", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
             <input
@@ -301,12 +320,51 @@ export default function AccountSyncSection({ apiKey }) {
             Auto-scrobble anime
           </label>
         </div>
+
+        {/* Optional 1-click Authorize URL opener */}
+        {isElectron && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, color: "var(--text3)" }}>
+            <span>Need a token?</span>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ padding: "3px 9px", fontSize: 11 }}
+              onClick={() =>
+                window.electron.openExternal("https://anilist.co/settings/developer")
+              }
+            >
+              1. Create Client (Redirect: https://anilist.co/api/v2/oauth/pin) ↗
+            </button>
+            <input
+              type="text"
+              className="apikey-input"
+              style={{ width: 115, padding: "4px 8px", fontSize: 12, marginBottom: 0 }}
+              placeholder="Client ID…"
+              value={anilistClientId}
+              onChange={(e) => setAnilistClientId(e.target.value.replace(/\D/g, ""))}
+            />
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ padding: "4px 10px", fontSize: 11 }}
+              disabled={!anilistClientId}
+              onClick={() =>
+                window.electron.openExternal(
+                  `https://anilist.co/api/v2/oauth/authorize?client_id=${anilistClientId}&response_type=token`,
+                )
+              }
+            >
+              2. Get Token ↗
+            </button>
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <input
             type="password"
             className="apikey-input"
             style={{ flex: 1, minWidth: 220, marginBottom: 0 }}
-            placeholder="AniList Personal Access Token…"
+            placeholder="AniList Access Token…"
             value={anilistToken}
             onChange={(e) => setAnilistToken(e.target.value)}
           />
@@ -332,7 +390,7 @@ export default function AccountSyncSection({ apiKey }) {
         )}
       </div>
 
-      {/* Trakt Card */}
+      {/* ── Trakt PKCE 1-Click Card ── */}
       <div
         style={{
           background: "var(--surface)",
@@ -345,8 +403,27 @@ export default function AccountSyncSection({ apiKey }) {
           gap: 10,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 14, fontWeight: 600 }}>Trakt.tv Scrobbling</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>
+              Trakt.tv Scrobbling (PKCE)
+            </span>
+            {traktConnectedUser && (
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  background: "rgba(72,199,116,0.14)",
+                  color: "#48c774",
+                  border: "1px solid rgba(72,199,116,0.3)",
+                }}
+              >
+                ✓ {traktConnectedUser}
+              </span>
+            )}
+          </div>
           <label style={{ fontSize: 12, color: "var(--text2)", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
             <input
               type="checkbox"
@@ -359,37 +436,72 @@ export default function AccountSyncSection({ apiKey }) {
             Auto-scrobble movies &amp; series
           </label>
         </div>
+
+        {/* Redirect URI helper row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, color: "var(--text3)" }}>
+          <span>Set Redirect URI on</span>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ padding: "2px 8px", fontSize: 11 }}
+            onClick={() =>
+              window.electron?.openExternal("https://developer.trakt.tv/apps/new")
+            }
+          >
+            developer.trakt.tv ↗
+          </button>
+          <span>to:</span>
+          <code style={{ color: "var(--text2)", background: "var(--surface2)", padding: "2px 7px", borderRadius: 5 }}>
+            {TRAKT_PKCE_REDIRECT_URI}
+          </code>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ padding: "2px 8px", fontSize: 11 }}
+            onClick={() => {
+              navigator.clipboard?.writeText(TRAKT_PKCE_REDIRECT_URI);
+              setCopiedUri(true);
+              setTimeout(() => setCopiedUri(false), 1800);
+            }}
+          >
+            {copiedUri ? "✓ Copied" : "Copy URI"}
+          </button>
+        </div>
+
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <input
             type="text"
             className="apikey-input"
-            style={{ flex: 1, minWidth: 180, marginBottom: 0 }}
-            placeholder="Trakt Client ID…"
+            style={{ flex: 1, minWidth: 220, marginBottom: 0 }}
+            placeholder="Paste Trakt Client ID (no secret needed)…"
             value={traktClientId}
             onChange={(e) => setTraktClientId(e.target.value)}
           />
-          <input
-            type="password"
-            className="apikey-input"
-            style={{ flex: 1, minWidth: 180, marginBottom: 0 }}
-            placeholder="Trakt Access Token…"
-            value={traktToken}
-            onChange={(e) => setTraktToken(e.target.value)}
-          />
           <button
             className="btn btn-primary"
-            disabled={busy}
-            onClick={handleSaveTrakt}
+            disabled={busy || !traktClientId.trim() || !isElectron}
+            onClick={handleTraktSignIn}
           >
-            Save &amp; Verify
+            {traktConnectedUser ? "Reconnect Trakt ↗" : "Sign in with Trakt ↗"}
           </button>
-          <button
-            className="btn btn-secondary"
-            disabled={busy || !traktClientId.trim() || !traktToken.trim() || !apiKey}
-            onClick={handlePullTrakt}
-          >
-            Pull Watchlist
-          </button>
+          {traktConnectedUser && (
+            <>
+              <button
+                className="btn btn-secondary"
+                disabled={busy || !apiKey}
+                onClick={handlePullTrakt}
+              >
+                Pull Watchlist
+              </button>
+              <button
+                className="btn btn-ghost"
+                disabled={busy}
+                onClick={handleTraktDisconnect}
+              >
+                Disconnect
+              </button>
+            </>
+          )}
         </div>
         {traktMsg && (
           <div style={{ fontSize: 12, color: traktMsg.ok ? "#48c774" : "var(--red)" }}>
@@ -398,7 +510,7 @@ export default function AccountSyncSection({ apiKey }) {
         )}
       </div>
 
-      {/* CSV / XML Import Card */}
+      {/* ── CSV / XML Import Card ── */}
       <div
         style={{
           background: "var(--surface)",

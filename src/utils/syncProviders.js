@@ -7,6 +7,33 @@ import { tmdbFetch, fetchAnilistData, isAnimeContent } from "./api.js";
 
 const ANILIST_GQL = "https://graphql.anilist.co";
 const TRAKT_API = "https://api.trakt.tv";
+export const TRAKT_PKCE_REDIRECT_URI = "http://127.0.0.1:49215/callback";
+
+/**
+ * Pure RFC-7636 S256 PKCE challenge helper (used for verification & tests).
+ */
+export async function derivePkceChallengeS256(verifier) {
+  const data = new TextEncoder().encode(String(verifier));
+  const hashBuf = await globalThis.crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(hashBuf);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+export async function getActiveTraktAuth() {
+  if (typeof window !== "undefined" && window.electron?.traktGetValidAuth) {
+    const r = await window.electron.traktGetValidAuth();
+    if (r?.ok && r.clientId && r.accessToken) {
+      return { clientId: r.clientId, token: r.accessToken };
+    }
+  }
+  const [clientId, token] = await Promise.all([
+    secureStorage.get(STORAGE_KEYS.TRAKT_CLIENT_ID),
+    secureStorage.get(STORAGE_KEYS.TRAKT_TOKEN),
+  ]);
+  return clientId && token ? { clientId, token } : null;
+}
 
 // ── Watched key parser ───────────────────────────────────────────────────────
 
@@ -218,15 +245,16 @@ export async function scrobbleWatchedKey(watchedKey, apiKey) {
   const parsed = parseWatchedKey(watchedKey);
   if (!parsed) return;
 
-  // 1. Trakt.tv scrobble
+  // 1. Trakt.tv scrobble (uses auto-refreshing PKCE session)
   if (storage.get(STORAGE_KEYS.TRAKT_SYNC_ENABLED)) {
-    Promise.all([
-      secureStorage.get(STORAGE_KEYS.TRAKT_CLIENT_ID),
-      secureStorage.get(STORAGE_KEYS.TRAKT_TOKEN),
-    ])
-      .then(([clientId, token]) => {
-        if (clientId && token) {
-          return pushTraktWatched({ clientId, token, ...parsed });
+    getActiveTraktAuth()
+      .then((auth) => {
+        if (auth?.clientId && auth?.token) {
+          return pushTraktWatched({
+            clientId: auth.clientId,
+            token: auth.token,
+            ...parsed,
+          });
         }
       })
       .catch(() => {});

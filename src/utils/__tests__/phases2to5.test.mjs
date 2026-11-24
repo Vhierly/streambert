@@ -10,6 +10,7 @@ import {
 import {
   parseWatchedKey,
   parseWatchlistImport,
+  derivePkceChallengeS256,
 } from "../syncProviders.js";
 
 test("srtToVtt converts SRT commas to WebVTT dots and shifts timestamps", () => {
@@ -94,4 +95,10 @@ test("parseWatchlistImport handles IMDb CSV, Letterboxd CSV, and MAL XML", () =>
     season: 2,
     episode: 4,
   });
+});
+
+test("derivePkceChallengeS256 matches official RFC 7636 Appendix B vector", async () => {
+  const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+  const expected = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+  assert.equal(await derivePkceChallengeS256(verifier), expected);
 });
