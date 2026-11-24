@@ -20,6 +20,125 @@ import {
 // Session-scoped genre list cache per media kind ("movie" | "tv")
 const _genreCache = new Map();
 
+const ChevronIcon = ({ open }) => (
+  <svg
+    width="13"
+    height="13"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.4"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={`explore-dd__chevron${open ? " is-open" : ""}`}
+  >
+    <polyline points="6 9 12 15 18 9" />
+  </svg>
+);
+
+const CheckMark = () => (
+  <svg
+    width="13"
+    height="13"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+);
+
+const DiceSvg = () => (
+  <svg
+    width="15"
+    height="15"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <rect x="3" y="3" width="18" height="18" rx="3" />
+    <circle cx="8.5" cy="8.5" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="15.5" cy="8.5" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="8.5" cy="15.5" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="15.5" cy="15.5" r="1.2" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+const ShuffleSvg = () => (
+  <svg
+    width="15"
+    height="15"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <polyline points="16 3 21 3 21 8" />
+    <line x1="4" y1="20" x2="21" y2="3" />
+    <polyline points="21 16 21 21 16 21" />
+    <line x1="15" y1="15" x2="21" y2="21" />
+    <line x1="4" y1="4" x2="9" y2="9" />
+  </svg>
+);
+
+const ResetSvg = () => (
+  <svg
+    width="13"
+    height="13"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+    <polyline points="3 3 3 8 8 8" />
+  </svg>
+);
+
+function FilterDropdown({
+  id,
+  openMenu,
+  setOpenMenu,
+  label,
+  active = false,
+  badge = null,
+  wide = false,
+  children,
+}) {
+  const isOpen = openMenu === id;
+  return (
+    <div className="explore-dd">
+      <button
+        type="button"
+        className={`explore-dd__trigger${isOpen ? " is-open" : ""}${active ? " is-active" : ""}`}
+        onClick={() => setOpenMenu(isOpen ? null : id)}
+      >
+        <span className="explore-dd__text">{label}</span>
+        {badge != null && <span className="explore-dd__badge">{badge}</span>}
+        <ChevronIcon open={isOpen} />
+      </button>
+      {isOpen && (
+        <div
+          className={`explore-dd__panel${wide ? " explore-dd__panel--wide" : ""}`}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ExplorePage({
   apiKey,
   offline,
@@ -38,6 +157,7 @@ export default function ExplorePage({
       : DEFAULT_EXPLORE_FILTERS;
   });
 
+  const [openMenu, setOpenMenu] = useState(null);
   const [genresList, setGenresList] = useState([]);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
@@ -46,6 +166,8 @@ export default function ExplorePage({
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [surprising, setSurprising] = useState(false);
+
+  const toolbarRef = useRef(null);
   const sentinelRef = useRef(null);
 
   const activeMode = useMemo(
@@ -55,6 +177,25 @@ export default function ExplorePage({
   );
   const mediaKind = activeMode.mediaType;
   const watchRegion = useMemo(() => getRatingCountry(storage) || "US", []);
+
+  // Close open dropdown on outside click or Escape
+  useEffect(() => {
+    if (!openMenu) return;
+    const onMouseDown = (e) => {
+      if (toolbarRef.current && !toolbarRef.current.contains(e.target)) {
+        setOpenMenu(null);
+      }
+    };
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") setOpenMenu(null);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [openMenu]);
 
   // Persist filters on change
   useEffect(() => {
@@ -143,7 +284,16 @@ export default function ExplorePage({
       })
       .catch(() => {})
       .finally(() => setLoadingMore(false));
-  }, [apiKey, offline, loading, loadingMore, page, totalPages, filters, watchRegion]);
+  }, [
+    apiKey,
+    offline,
+    loading,
+    loadingMore,
+    page,
+    totalPages,
+    filters,
+    watchRegion,
+  ]);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -180,10 +330,10 @@ export default function ExplorePage({
   }, []);
 
   const handleModeChange = useCallback((modeId) => {
+    setOpenMenu(null);
     setFilters((prev) => ({
       ...prev,
       mode: modeId,
-      // Reset genre chips when switching movie <-> tv because some genre IDs differ
       genres: [],
     }));
   }, []);
@@ -199,6 +349,7 @@ export default function ExplorePage({
   }, []);
 
   const resetFilters = useCallback(() => {
+    setOpenMenu(null);
     setFilters(DEFAULT_EXPLORE_FILTERS);
   }, []);
 
@@ -216,11 +367,13 @@ export default function ExplorePage({
       const candidates = (data?.results || [])
         .map((i) => ({ ...i, media_type: mediaType }))
         .filter((i) => !itemRestricted(i));
-      const picked = pickRandomItem(candidates.length ? candidates : visibleItems);
+      const picked = pickRandomItem(
+        candidates.length ? candidates : visibleItems,
+      );
       if (picked) {
         onSelect(picked);
       } else {
-        showToast?.("No matching titles found for Surprise Me");
+        showToast?.("No matching titles found");
       }
     } catch {
       const fallback = pickRandomItem(visibleItems);
@@ -253,190 +406,377 @@ export default function ExplorePage({
     if (picked) onSelect(picked);
   }, [savedList, watched, onSelect]);
 
+  // Derived labels for compact triggers
+  const sortLabel =
+    DISCOVER_SORTS.find((s) => s.value === filters.sortBy)?.label ||
+    "Most Popular";
+  const activeProvider = POPULAR_PROVIDERS.find(
+    (p) => p.id === filters.providerId,
+  );
+  const activeYear = YEAR_PRESETS.find((y) => y.value === filters.yearPreset);
+  const activeRating = RATING_FLOOR_OPTIONS.find(
+    (r) => Number(r.value) === Number(filters.minRating),
+  );
+  const activeLang = LANGUAGE_OPTIONS.find(
+    (l) => l.value === filters.origLang,
+  );
+
+  const availableGenres = useMemo(
+    () => genresList.filter((g) => !(activeMode.isAnime && g.id === 16)),
+    [genresList, activeMode.isAnime],
+  );
+
+  // Dismissible active filter tags (excluding mode & default sort)
+  const activeTags = useMemo(() => {
+    const tags = [];
+    if (activeProvider) {
+      tags.push({
+        key: `prov_${activeProvider.id}`,
+        label: activeProvider.label,
+        onRemove: () => updateFilter({ providerId: null }),
+      });
+    }
+    for (const gid of filters.genres) {
+      const g = genresList.find((x) => x.id === gid);
+      if (g) {
+        tags.push({
+          key: `genre_${gid}`,
+          label: g.name,
+          onRemove: () => toggleGenre(gid),
+        });
+      }
+    }
+    if (filters.yearPreset && activeYear) {
+      tags.push({
+        key: "year",
+        label: activeYear.label,
+        onRemove: () => updateFilter({ yearPreset: "" }),
+      });
+    }
+    if (Number(filters.minRating) > 0 && activeRating) {
+      tags.push({
+        key: "rating",
+        label: activeRating.label,
+        onRemove: () => updateFilter({ minRating: 0 }),
+      });
+    }
+    if (!activeMode.isAnime && filters.origLang && activeLang) {
+      tags.push({
+        key: "lang",
+        label: activeLang.label,
+        onRemove: () => updateFilter({ origLang: "" }),
+      });
+    }
+    return tags;
+  }, [
+    activeProvider,
+    filters.genres,
+    filters.yearPreset,
+    filters.minRating,
+    filters.origLang,
+    activeMode.isAnime,
+    genresList,
+    activeYear,
+    activeRating,
+    activeLang,
+    updateFilter,
+    toggleGenre,
+  ]);
+
   const isCustomized = hasCustomExploreFilters(filters);
 
   return (
     <div className="fade-in explore-page">
-      {/* ── Header ── */}
-      <div className="explore-header">
-        <div>
-          <div className="explore-title">EXPLORE &amp; DISCOVER</div>
-          <div className="explore-subtitle">
-            Browse movies, series, and anime by genre, era, rating, or streaming
-            network
-            {!loading && totalResults > 0
-              ? ` · ${totalResults.toLocaleString()} titles`
-              : ""}
-          </div>
-        </div>
-        <div className="explore-header-actions">
-          {savedList.length > 0 && (
-            <button
-              className="btn btn-secondary explore-action-btn"
-              onClick={handleRandomWatchlist}
-              title="Pick a random title from your Watchlist"
-            >
-              🎯 Random Watchlist
-            </button>
-          )}
-          <button
-            className="btn btn-primary explore-action-btn"
-            onClick={handleSurpriseMe}
-            disabled={offline || surprising || ( !loading && visibleItems.length === 0 )}
-            title="Open a random title matching your current filters"
-          >
-            {surprising ? "Rolling…" : "🎲 Surprise Me"}
-          </button>
-          {isCustomized && (
-            <button
-              className="btn btn-ghost explore-action-btn"
-              onClick={resetFilters}
-              title="Reset all filters"
-            >
-              ↺ Reset
-            </button>
+      {/* ── Top Row: Title + Segmented Mode Switcher ── */}
+      <div className="explore-top">
+        <div className="explore-heading">
+          <h1 className="explore-title">EXPLORE</h1>
+          {!loading && totalResults > 0 && (
+            <span className="explore-count">
+              {totalResults.toLocaleString()} titles
+            </span>
           )}
         </div>
-      </div>
 
-      {/* ── Filter Controls ── */}
-      <div className="explore-filters">
-        {/* Mode tabs */}
-        <div className="explore-modes">
+        <div className="explore-segmented" role="tablist">
           {DISCOVER_MODES.map((m) => (
             <button
               key={m.id}
-              className={`explore-mode-btn${filters.mode === m.id ? " active" : ""}`}
+              type="button"
+              role="tab"
+              aria-selected={filters.mode === m.id}
+              className={`explore-seg-btn${filters.mode === m.id ? " active" : ""}`}
               onClick={() => handleModeChange(m.id)}
             >
               {m.label}
             </button>
           ))}
         </div>
+      </div>
 
-        {/* Select dropdowns */}
-        <div className="explore-select-row">
-          <label className="explore-select-group">
-            <span>Sort by</span>
-            <select
-              className="explore-select"
-              value={filters.sortBy}
-              onChange={(e) => updateFilter({ sortBy: e.target.value })}
+      {/* ── Compact Filter Strip + Quick Actions ── */}
+      <div className="explore-bar-wrap" ref={toolbarRef}>
+        <div className="explore-bar">
+          <div className="explore-bar__filters">
+            {/* Sort */}
+            <FilterDropdown
+              id="sort"
+              openMenu={openMenu}
+              setOpenMenu={setOpenMenu}
+              label={sortLabel}
+              active={filters.sortBy !== DEFAULT_EXPLORE_FILTERS.sortBy}
             >
-              {DISCOVER_SORTS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              {DISCOVER_SORTS.map((o) => {
+                const selected = filters.sortBy === o.value;
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    className={`explore-dd__item${selected ? " is-selected" : ""}`}
+                    onClick={() => {
+                      updateFilter({ sortBy: o.value });
+                      setOpenMenu(null);
+                    }}
+                  >
+                    <span>{o.label}</span>
+                    {selected && <CheckMark />}
+                  </button>
+                );
+              })}
+            </FilterDropdown>
 
-          <label className="explore-select-group">
-            <span>Year / Era</span>
-            <select
-              className="explore-select"
-              value={filters.yearPreset}
-              onChange={(e) => updateFilter({ yearPreset: e.target.value })}
-            >
-              {YEAR_PRESETS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="explore-select-group">
-            <span>Min Score</span>
-            <select
-              className="explore-select"
-              value={filters.minRating}
-              onChange={(e) =>
-                updateFilter({ minRating: Number(e.target.value) })
-              }
-            >
-              {RATING_FLOOR_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          {!activeMode.isAnime && (
-            <label className="explore-select-group">
-              <span>Language</span>
-              <select
-                className="explore-select"
-                value={filters.origLang}
-                onChange={(e) => updateFilter({ origLang: e.target.value })}
-              >
-                {LANGUAGE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-        </div>
-
-        {/* Streaming provider pills */}
-        <div className="explore-chip-row">
-          <span className="explore-chip-label">Network</span>
-          <div className="explore-chips">
-            <button
-              className={`explore-chip${filters.providerId == null ? " active" : ""}`}
-              onClick={() => updateFilter({ providerId: null })}
-            >
-              All
-            </button>
-            {POPULAR_PROVIDERS.map((p) => (
-              <button
-                key={p.id}
-                className={`explore-chip${filters.providerId === p.id ? " active" : ""}`}
-                onClick={() =>
-                  updateFilter({
-                    providerId: filters.providerId === p.id ? null : p.id,
-                  })
+            {/* Genres (Multi-select 2-col popover) */}
+            {availableGenres.length > 0 && (
+              <FilterDropdown
+                id="genres"
+                openMenu={openMenu}
+                setOpenMenu={setOpenMenu}
+                label="Genres"
+                active={filters.genres.length > 0}
+                badge={
+                  filters.genres.length > 0 ? filters.genres.length : null
                 }
+                wide
               >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
+                <div className="explore-dd__grid">
+                  {availableGenres.map((g) => {
+                    const checked = filters.genres.includes(g.id);
+                    return (
+                      <button
+                        key={g.id}
+                        type="button"
+                        className={`explore-dd__item${checked ? " is-selected" : ""}`}
+                        onClick={() => toggleGenre(g.id)}
+                      >
+                        <span>{g.name}</span>
+                        {checked && <CheckMark />}
+                      </button>
+                    );
+                  })}
+                </div>
+                {filters.genres.length > 0 && (
+                  <div className="explore-dd__footer">
+                    <button
+                      type="button"
+                      className="explore-dd__clear"
+                      onClick={() => updateFilter({ genres: [] })}
+                    >
+                      Clear selected genres
+                    </button>
+                  </div>
+                )}
+              </FilterDropdown>
+            )}
 
-        {/* Genre multi-select chips */}
-        {genresList.length > 0 && (
-          <div className="explore-chip-row">
-            <span className="explore-chip-label">Genres</span>
-            <div className="explore-chips">
-              {genresList
-                .filter((g) => !(activeMode.isAnime && g.id === 16))
-                .map((g) => {
-                  const active = filters.genres.includes(g.id);
+            {/* Streaming Network */}
+            <FilterDropdown
+              id="network"
+              openMenu={openMenu}
+              setOpenMenu={setOpenMenu}
+              label={activeProvider ? activeProvider.label : "Network"}
+              active={!!activeProvider}
+            >
+              <button
+                type="button"
+                className={`explore-dd__item${!activeProvider ? " is-selected" : ""}`}
+                onClick={() => {
+                  updateFilter({ providerId: null });
+                  setOpenMenu(null);
+                }}
+              >
+                <span>All Networks</span>
+                {!activeProvider && <CheckMark />}
+              </button>
+              {POPULAR_PROVIDERS.map((p) => {
+                const selected = filters.providerId === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`explore-dd__item${selected ? " is-selected" : ""}`}
+                    onClick={() => {
+                      updateFilter({ providerId: selected ? null : p.id });
+                      setOpenMenu(null);
+                    }}
+                  >
+                    <span>{p.label}</span>
+                    {selected && <CheckMark />}
+                  </button>
+                );
+              })}
+            </FilterDropdown>
+
+            {/* Year / Era */}
+            <FilterDropdown
+              id="year"
+              openMenu={openMenu}
+              setOpenMenu={setOpenMenu}
+              label={filters.yearPreset ? activeYear?.label : "Year"}
+              active={!!filters.yearPreset}
+            >
+              {YEAR_PRESETS.map((o) => {
+                const selected = filters.yearPreset === o.value;
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    className={`explore-dd__item${selected ? " is-selected" : ""}`}
+                    onClick={() => {
+                      updateFilter({ yearPreset: o.value });
+                      setOpenMenu(null);
+                    }}
+                  >
+                    <span>{o.label}</span>
+                    {selected && <CheckMark />}
+                  </button>
+                );
+              })}
+            </FilterDropdown>
+
+            {/* Min Score */}
+            <FilterDropdown
+              id="rating"
+              openMenu={openMenu}
+              setOpenMenu={setOpenMenu}
+              label={
+                Number(filters.minRating) > 0 ? activeRating?.label : "Score"
+              }
+              active={Number(filters.minRating) > 0}
+            >
+              {RATING_FLOOR_OPTIONS.map((o) => {
+                const selected =
+                  Number(filters.minRating) === Number(o.value);
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    className={`explore-dd__item${selected ? " is-selected" : ""}`}
+                    onClick={() => {
+                      updateFilter({ minRating: Number(o.value) });
+                      setOpenMenu(null);
+                    }}
+                  >
+                    <span>{o.label}</span>
+                    {selected && <CheckMark />}
+                  </button>
+                );
+              })}
+            </FilterDropdown>
+
+            {/* Original Language */}
+            {!activeMode.isAnime && (
+              <FilterDropdown
+                id="lang"
+                openMenu={openMenu}
+                setOpenMenu={setOpenMenu}
+                label={filters.origLang ? activeLang?.label : "Language"}
+                active={!!filters.origLang}
+              >
+                {LANGUAGE_OPTIONS.map((o) => {
+                  const selected = filters.origLang === o.value;
                   return (
                     <button
-                      key={g.id}
-                      className={`explore-chip${active ? " active" : ""}`}
-                      onClick={() => toggleGenre(g.id)}
+                      key={o.value}
+                      type="button"
+                      className={`explore-dd__item${selected ? " is-selected" : ""}`}
+                      onClick={() => {
+                        updateFilter({ origLang: o.value });
+                        setOpenMenu(null);
+                      }}
                     >
-                      {g.name}
+                      <span>{o.label}</span>
+                      {selected && <CheckMark />}
                     </button>
                   );
                 })}
-            </div>
+              </FilterDropdown>
+            )}
+
+            {isCustomized && (
+              <button
+                type="button"
+                className="explore-reset-btn"
+                onClick={resetFilters}
+                title="Reset all filters"
+              >
+                <ResetSvg />
+                <span>Reset</span>
+              </button>
+            )}
+          </div>
+
+          {/* Right-side Quick Actions */}
+          <div className="explore-bar__actions">
+            {savedList.length > 0 && (
+              <button
+                type="button"
+                className="explore-btn explore-btn--secondary"
+                onClick={handleRandomWatchlist}
+                title="Open a random unwatched title from your Watchlist"
+              >
+                <ShuffleSvg />
+                <span>Watchlist Pick</span>
+              </button>
+            )}
+            <button
+              type="button"
+              className="explore-btn explore-btn--primary"
+              onClick={handleSurpriseMe}
+              disabled={
+                offline || surprising || (!loading && visibleItems.length === 0)
+              }
+              title="Pick a random title matching your active filters"
+            >
+              <DiceSvg />
+              <span>{surprising ? "Picking…" : "Surprise Me"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Dismissible Active Filter Tags (rendered ONLY when filters are active) */}
+        {activeTags.length > 0 && (
+          <div className="explore-active-tags">
+            {activeTags.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                className="explore-tag"
+                onClick={t.onRemove}
+                title={`Remove ${t.label}`}
+              >
+                <span>{t.label}</span>
+                <span className="explore-tag__x">×</span>
+              </button>
+            ))}
           </div>
         )}
       </div>
 
-      {/* ── Content ── */}
+      {/* ── Results Grid ── */}
       {offline ? (
         <div className="empty-state">
-          <div style={{ fontSize: 42 }}>📡</div>
-          <h3>Offline Mode</h3>
-          <p>Connect to the internet to browse and filter the catalog.</p>
+          <h3>You are offline</h3>
+          <p>Connect to the internet to browse the catalog.</p>
         </div>
       ) : loading ? (
         <div className="loader">
@@ -444,15 +784,15 @@ export default function ExplorePage({
         </div>
       ) : visibleItems.length === 0 ? (
         <div className="empty-state">
-          <h3>No titles match your filters</h3>
-          <p>Try loosening your rating, network, or genre selection.</p>
+          <h3>No matching titles</h3>
+          <p>Remove a genre, network, or score filter to broaden results.</p>
           {isCustomized && (
             <button
               className="btn btn-secondary"
               style={{ marginTop: 14, marginInline: "auto" }}
               onClick={resetFilters}
             >
-              Reset Filters
+              Reset filters
             </button>
           )}
         </div>
@@ -481,7 +821,6 @@ export default function ExplorePage({
             })}
           </div>
 
-          {/* Sentinel + manual Load More button */}
           <div ref={sentinelRef} className="explore-load-more">
             {loadingMore ? (
               <div className="loader" style={{ padding: 20 }}>
@@ -490,7 +829,7 @@ export default function ExplorePage({
             ) : (
               page < totalPages && (
                 <button className="btn btn-secondary" onClick={loadNextPage}>
-                  Load More ({page} / {totalPages})
+                  Load more ({page} / {totalPages})
                 </button>
               )
             )}
