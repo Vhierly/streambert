@@ -2,7 +2,7 @@
 // Handles subtitle search (SubDL + Wyzie), ZIP extraction, download-for-file,
 // and subtitle registry management in the downloads store.
 
-const { ipcMain } = require("electron");
+const { ipcMain, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
@@ -520,6 +520,66 @@ function register({ getDownloads, saveDownloads }) {
         }
       }
       return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // ── Fetch online subtitle raw text directly (CORS-free for live players) ──
+  ipcMain.handle("fetch-subtitle-text", async (_, { fileId, directUrl } = {}) => {
+    try {
+      if (String(fileId || "").startsWith("subdl_")) {
+        const parts = String(fileId).split("_");
+        const subdlPath = decodeURIComponent(parts.slice(2).join("_"));
+        const res = await fetchWithTimeout(
+          `https://dl.subdl.com${subdlPath}`,
+          { headers: { "User-Agent": "Streambert" } },
+          30000,
+        );
+        if (!res.ok) return { ok: false, error: `SubDL HTTP ${res.status}` };
+        const zipBuf = Buffer.from(await res.arrayBuffer());
+        const extracted = extractFirstSubtitleFromZip(zipBuf);
+        if (!extracted) return { ok: false, error: "No subtitle in ZIP" };
+        return {
+          ok: true,
+          text: extracted.data.toString("utf8"),
+          name: extracted.name,
+        };
+      }
+
+      const url =
+        directUrl ||
+        (String(fileId || "").startsWith("wyzie_")
+          ? decodeURIComponent(String(fileId).split("_").slice(2).join("_"))
+          : null);
+      if (!url || !/^https?:\/\//i.test(url)) {
+        return { ok: false, error: "Invalid subtitle URL" };
+      }
+      const res = await fetchWithTimeout(
+        url,
+        { headers: { "User-Agent": "Streambert" } },
+        20000,
+      );
+      if (!res.ok) return { ok: false, error: `Subtitle HTTP ${res.status}` };
+      const text = await res.text();
+      return { ok: true, text, name: "subtitle.srt" };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // ── Pick a local .srt / .vtt subtitle file from disk ──────────────────────
+  ipcMain.handle("pick-subtitle-file", async () => {
+    try {
+      const res = await dialog.showOpenDialog({
+        title: "Select Subtitle File (.srt / .vtt)",
+        properties: ["openFile"],
+        filters: [{ name: "Subtitles", extensions: ["srt", "vtt", "ass", "ssa"] }],
+      });
+      if (res.canceled || !res.filePaths?.[0]) return { ok: false, canceled: true };
+      const p = res.filePaths[0];
+      const text = fs.readFileSync(p, "utf8");
+      return { ok: true, text, name: path.basename(p) };
     } catch (e) {
       return { ok: false, error: e.message };
     }

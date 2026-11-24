@@ -1,16 +1,16 @@
 import { useState, useEffect } from "react";
 import {
-  normalizeAddonUrl,
-  validateStremioManifest,
-  fetchJsonViaBridge,
+  FEATURED_COMMUNITY_ADDONS,
+  installAddonFromUrl,
   loadInstalledAddons,
   saveInstalledAddons,
 } from "../utils/stremio";
+import { isElectron } from "../utils/storage";
 
 export default function StremioAddonsSection() {
   const [addons, setAddons] = useState(() => loadInstalledAddons());
   const [manifestInput, setManifestInput] = useState("");
-  const [installing, setInstalling] = useState(false);
+  const [busyUrl, setBusyUrl] = useState(null);
   const [feedback, setFeedback] = useState(null); // { ok: boolean, msg: string }
 
   useEffect(() => {
@@ -19,71 +19,31 @@ export default function StremioAddonsSection() {
     return () => window.removeEventListener("streambert:addons-changed", refresh);
   }, []);
 
-  const handleInstall = async (e) => {
-    e?.preventDefault?.();
-    const parsed = normalizeAddonUrl(manifestInput);
-    if (!parsed) {
-      setFeedback({
-        ok: false,
-        msg: "Enter a valid https://.../manifest.json or stremio://... URL.",
-      });
-      return;
-    }
-
-    setInstalling(true);
+  const doInstall = async (urlToInstall, clearInput = false) => {
+    setBusyUrl(urlToInstall);
     setFeedback(null);
     try {
-      const raw = await fetchJsonViaBridge(parsed.manifestUrl);
-      const check = validateStremioManifest(raw);
-      if (!check.valid) {
-        setFeedback({ ok: false, msg: check.reason || "Invalid addon manifest." });
-        return;
-      }
-      if (!check.supportsStream) {
-        setFeedback({
-          ok: false,
-          msg: `"${check.name}" is a catalog/metadata addon only and does not provide streams.`,
-        });
-        return;
-      }
-
-      const nextAddon = {
-        id: check.id,
-        name: check.name,
-        version: check.version,
-        description: check.description,
-        logo: check.logo,
-        types: check.types,
-        manifestUrl: parsed.manifestUrl,
-        baseUrl: parsed.baseUrl,
-        enabled: true,
-        installedAt: Date.now(),
-      };
-
-      const current = loadInstalledAddons();
-      const idx = current.findIndex(
-        (a) => a.id === nextAddon.id || a.baseUrl === nextAddon.baseUrl,
-      );
-      const updated =
-        idx >= 0
-          ? current.map((a, i) => (i === idx ? { ...a, ...nextAddon } : a))
-          : [...current, nextAddon];
-
-      saveInstalledAddons(updated);
-      setAddons(updated);
-      setManifestInput("");
+      const { addon, list } = await installAddonFromUrl(urlToInstall);
+      setAddons(list);
+      if (clearInput) setManifestInput("");
       setFeedback({
         ok: true,
-        msg: `✓ Installed "${check.name}" v${check.version}`,
+        msg: `✓ Installed "${addon.name}" v${addon.version}`,
       });
     } catch (err) {
       setFeedback({
         ok: false,
-        msg: `Could not load manifest: ${err.message}`,
+        msg: `Could not install addon: ${err.message} (Tip: enable Encrypted DNS / DoH above if your ISP blocks the addon host)`,
       });
     } finally {
-      setInstalling(false);
+      setBusyUrl(null);
     }
+  };
+
+  const handleManualSubmit = (e) => {
+    e?.preventDefault?.();
+    if (!manifestInput.trim()) return;
+    doInstall(manifestInput.trim(), true);
   };
 
   const toggleAddon = (baseUrl) => {
@@ -100,6 +60,13 @@ export default function StremioAddonsSection() {
     setAddons(updated);
   };
 
+  const isFeaturedInstalled = (feat) =>
+    addons.some(
+      (a) =>
+        a.id === feat.id ||
+        a.manifestUrl?.toLowerCase() === feat.manifestUrl.toLowerCase(),
+    );
+
   return (
     <div style={{ marginBottom: 40 }}>
       <div
@@ -111,7 +78,7 @@ export default function StremioAddonsSection() {
         }}
       >
         <div className="settings-section-title" style={{ marginBottom: 0 }}>
-          Stremio Addon Bridge
+          Stremio Addon Bridge & Community Store
         </div>
         <span
           style={{
@@ -136,7 +103,7 @@ export default function StremioAddonsSection() {
           lineHeight: 1.6,
         }}
       >
-        Install any Stremio v1 stream addon via its{" "}
+        One-click install popular community stream addons below, or paste any custom{" "}
         <code
           style={{
             background: "var(--surface2)",
@@ -147,7 +114,7 @@ export default function StremioAddonsSection() {
         >
           manifest.json
         </code>{" "}
-        or{" "}
+        /{" "}
         <code
           style={{
             background: "var(--surface2)",
@@ -158,13 +125,129 @@ export default function StremioAddonsSection() {
         >
           stremio://
         </code>{" "}
-        link. Direct HTTP/HLS/Debrid streams play natively inside Streambert, MPV/VLC,
-        or the download queue, while P2P streams expose one-click Magnet links.
+        link (e.g. configured with Real-Debrid / TorBox).
       </div>
 
-      {/* Addon Manifest Installer */}
+      {/* 1-Click Featured Community Addons Grid */}
+      <div
+        style={{
+          fontSize: 12,
+          fontWeight: 600,
+          color: "var(--text2)",
+          textTransform: "uppercase",
+          letterSpacing: 0.5,
+          marginBottom: 10,
+        }}
+      >
+        Featured Community Addons (1-Click Install)
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))",
+          gap: 10,
+          marginBottom: 20,
+        }}
+      >
+        {FEATURED_COMMUNITY_ADDONS.map((feat) => {
+          const installed = isFeaturedInstalled(feat);
+          const installingThis = busyUrl === feat.manifestUrl;
+          return (
+            <div
+              key={feat.manifestUrl}
+              style={{
+                background: "var(--surface)",
+                border: `1px solid ${installed ? "rgba(72,199,116,0.4)" : "var(--border)"}`,
+                borderRadius: 10,
+                padding: "13px 15px",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "space-between",
+                gap: 10,
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 6,
+                    marginBottom: 5,
+                  }}
+                >
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text)" }}>
+                    {feat.name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 600,
+                      padding: "1px 7px",
+                      borderRadius: 99,
+                      background:
+                        feat.badge === "Direct HTTP"
+                          ? "rgba(72, 199, 116, 0.14)"
+                          : "rgba(229, 9, 20, 0.14)",
+                      color: feat.badge === "Direct HTTP" ? "#48c774" : "var(--red)",
+                    }}
+                  >
+                    {feat.badge}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.5 }}>
+                  {feat.description}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <span style={{ fontSize: 11, color: "var(--text3)" }}>{feat.kind}</span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {feat.configureUrl && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ height: 28, fontSize: 11.5, padding: "0 8px" }}
+                      title="Open web configurator (e.g. for Debrid keys)"
+                      onClick={() =>
+                        isElectron && window.electron?.openExternal
+                          ? window.electron.openExternal(feat.configureUrl)
+                          : window.open(feat.configureUrl, "_blank", "noopener")
+                      }
+                    >
+                      Configure ↗
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={installed ? "btn btn-secondary" : "btn btn-primary"}
+                    disabled={!!busyUrl || installed}
+                    style={{ height: 28, fontSize: 11.5, padding: "0 11px" }}
+                    onClick={() => doInstall(feat.manifestUrl)}
+                  >
+                    {installed
+                      ? "✓ Installed"
+                      : installingThis
+                        ? "Installing…"
+                        : "+ Install"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Custom Manifest Input */}
       <form
-        onSubmit={handleInstall}
+        onSubmit={handleManualSubmit}
         style={{
           display: "flex",
           gap: 10,
@@ -176,7 +259,7 @@ export default function StremioAddonsSection() {
         <input
           className="apikey-input"
           style={{ flex: 1, minWidth: 280, marginBottom: 0, height: 38 }}
-          placeholder="Paste https://.../manifest.json or stremio://... link"
+          placeholder="Or paste custom https://.../manifest.json or stremio://... link"
           value={manifestInput}
           onChange={(e) => {
             setManifestInput(e.target.value);
@@ -185,11 +268,11 @@ export default function StremioAddonsSection() {
         />
         <button
           type="submit"
-          className="btn btn-primary"
-          disabled={installing || !manifestInput.trim()}
-          style={{ height: 38, padding: "0 18px" }}
+          className="btn btn-secondary"
+          disabled={!!busyUrl || !manifestInput.trim()}
+          style={{ height: 38, padding: "0 16px" }}
         >
-          {installing ? "Installing…" : "+ Install Addon"}
+          {busyUrl === manifestInput.trim() ? "Installing…" : "+ Add Custom URL"}
         </button>
       </form>
 
@@ -198,7 +281,7 @@ export default function StremioAddonsSection() {
           style={{
             fontSize: 12.5,
             marginBottom: 14,
-            color: feedback.ok ? "#48c774" : "#ff3860",
+            color: feedback.ok ? "#48c774" : "#ff5c66",
             fontWeight: 500,
           }}
         >
@@ -207,157 +290,106 @@ export default function StremioAddonsSection() {
       )}
 
       {/* Installed Addons List */}
-      {addons.length === 0 ? (
-        <div
-          style={{
-            background: "var(--surface)",
-            border: "1px dashed var(--border)",
-            borderRadius: 10,
-            padding: "20px 22px",
-            fontSize: 13,
-            color: "var(--text3)",
-            lineHeight: 1.6,
-          }}
-        >
-          No Stremio stream addons installed yet. Paste an addon manifest URL above,
-          then click <strong style={{ color: "var(--text2)" }}>🧩 Addons</strong> on any
-          Movie or TV Show page to fetch streams.
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {addons.map((addon) => {
-            const isEnabled = addon.enabled !== false;
-            return (
-              <div
-                key={addon.baseUrl}
-                style={{
-                  background: "var(--surface)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 10,
-                  padding: "13px 16px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 14,
-                  opacity: isEnabled ? 1 : 0.55,
-                  transition: "opacity 0.15s",
-                }}
-              >
+      {addons.length > 0 && (
+        <>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "var(--text2)",
+              textTransform: "uppercase",
+              letterSpacing: 0.5,
+              marginBottom: 8,
+            }}
+          >
+            Installed Addons ({addons.length})
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {addons.map((addon) => {
+              const isEnabled = addon.enabled !== false;
+              return (
                 <div
+                  key={addon.baseUrl}
                   style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 8,
-                    background: "var(--surface2)",
+                    background: "var(--surface)",
                     border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    padding: "11px 15px",
                     display: "flex",
                     alignItems: "center",
-                    justifyContent: "center",
-                    overflow: "hidden",
-                    flexShrink: 0,
-                    fontSize: 18,
+                    gap: 12,
+                    opacity: isEnabled ? 1 : 0.55,
                   }}
                 >
-                  {addon.logo ? (
-                    <img
-                      src={addon.logo}
-                      alt=""
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                      onError={(e) => {
-                        e.currentTarget.style.display = "none";
-                      }}
-                    />
-                  ) : (
-                    "🧩"
-                  )}
-                </div>
-
-                <div style={{ flex: 1, minWidth: 0 }}>
                   <div
                     style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 8,
+                      background: "var(--surface2)",
+                      border: "1px solid var(--border)",
                       display: "flex",
                       alignItems: "center",
-                      gap: 8,
-                      flexWrap: "wrap",
+                      justifyContent: "center",
+                      overflow: "hidden",
+                      flexShrink: 0,
+                      fontSize: 16,
                     }}
                   >
-                    <span
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 600,
-                        color: "var(--text)",
-                      }}
-                    >
-                      {addon.name}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        color: "var(--text3)",
-                        background: "var(--surface2)",
-                        padding: "1px 6px",
-                        borderRadius: 4,
-                      }}
-                    >
-                      v{addon.version || "1.0"}
-                    </span>
-                    {(addon.types || []).slice(0, 3).map((t) => (
+                    {addon.logo ? (
+                      <img
+                        src={addon.logo}
+                        alt=""
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        onError={(e) => {
+                          e.currentTarget.style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      "🧩"
+                    )}
+                  </div>
+
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text)" }}>
+                        {addon.name}
+                      </span>
                       <span
-                        key={t}
                         style={{
-                          fontSize: 10.5,
-                          color: "var(--text2)",
-                          background: "rgba(255,255,255,0.06)",
+                          fontSize: 11,
+                          color: "var(--text3)",
+                          background: "var(--surface2)",
                           padding: "1px 6px",
                           borderRadius: 4,
-                          textTransform: "capitalize",
                         }}
                       >
-                        {t}
+                        v{addon.version || "1.0"}
                       </span>
-                    ))}
-                  </div>
-                  {addon.description && (
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "var(--text3)",
-                        marginTop: 3,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {addon.description}
                     </div>
-                  )}
-                </div>
+                  </div>
 
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => toggleAddon(addon.baseUrl)}
-                  style={{ height: 32, fontSize: 12, padding: "0 12px" }}
-                >
-                  {isEnabled ? "Enabled" : "Disabled"}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => removeAddon(addon.baseUrl)}
-                  title="Remove addon"
-                  style={{
-                    height: 32,
-                    fontSize: 12,
-                    padding: "0 10px",
-                    color: "#ff5a79",
-                  }}
-                >
-                  Remove
-                </button>
-              </div>
-            );
-          })}
-        </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => toggleAddon(addon.baseUrl)}
+                    style={{ height: 30, fontSize: 12, padding: "0 10px" }}
+                  >
+                    {isEnabled ? "Enabled" : "Disabled"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => removeAddon(addon.baseUrl)}
+                    style={{ height: 30, fontSize: 12, padding: "0 10px", color: "#ff5a79" }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );

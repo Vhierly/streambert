@@ -269,6 +269,11 @@ function buildDownloadCliArgs(entry, binInfo) {
       "-o",
       path.join(entry.downloadPath, `${safeName}.%(ext)s`),
     ];
+    try {
+      const { resolveFfmpegPath } = require("./torrentStreamer");
+      const ff = resolveFfmpegPath();
+      if (ff) args.push("--ffmpeg-location", ff);
+    } catch {}
     if (meta.referer) args.push("--referer", meta.referer);
     if (meta.userAgent) args.push("--user-agent", meta.userAgent);
     if (meta.origin) args.push("--add-header", `Origin:${meta.origin}`);

@@ -165,6 +165,71 @@ export function normalizeAddonStreams(rawStreams = [], addonName = "Addon", fall
     .filter(Boolean);
 }
 
+// ── Curated 1-Click Community Stream Addons ─────────────────────────────────
+
+export const FEATURED_COMMUNITY_ADDONS = [
+  {
+    id: "com.stremio.torrentio.addon",
+    name: "Torrentio",
+    badge: "Most Popular",
+    kind: "P2P + Debrid",
+    manifestUrl: "https://torrentio.strem.fun/manifest.json",
+    configureUrl: "https://torrentio.strem.fun/configure",
+    description:
+      "Largest 4K REMUX / 1080p Blu-Ray / Anime multi-tracker index (YTS, EZTV, 1337x, RARBG, Nyaa).",
+  },
+  {
+    id: "com.hayduk.webstreamr",
+    name: "WebStreamr",
+    badge: "Direct HTTP",
+    kind: "No P2P Needed",
+    manifestUrl: "https://webstreamr.hayd.uk/manifest.json",
+    configureUrl: "https://webstreamr.hayd.uk/configure",
+    description:
+      "Direct HTTP/HLS multi-hoster streams for Movies & TV Series without BitTorrent.",
+  },
+  {
+    id: "com.nuvio.streams",
+    name: "Nuvio Streams",
+    badge: "Direct HTTP",
+    kind: "Fast Direct",
+    manifestUrl: "https://nuviostreams.hayd.uk/manifest.json",
+    configureUrl: "https://nuviostreams.hayd.uk/",
+    description:
+      "High-bitrate direct HTTP streams with multi-audio and 4K/1080p links.",
+  },
+  {
+    id: "com.elfhosted.mediafusion",
+    name: "MediaFusion (ElfHosted)",
+    badge: "All-in-One",
+    kind: "Movies, TV & Anime",
+    manifestUrl: "https://mediafusion.elfhosted.com/manifest.json",
+    configureUrl: "https://mediafusion.elfhosted.com/configure",
+    description:
+      "Universal stream provider for global Movies, Series, Anime, and live events.",
+  },
+  {
+    id: "com.elfhosted.comet",
+    name: "Comet (ElfHosted)",
+    badge: "Fast Search",
+    kind: "P2P + Debrid",
+    manifestUrl: "https://comet.elfhosted.com/manifest.json",
+    configureUrl: "https://comet.elfhosted.com/configure",
+    description:
+      "Ultra-fast torrent and debrid stream aggregator hosted by ElfHosted.",
+  },
+  {
+    id: "com.stremio.tpbplus",
+    name: "ThePirateBay+",
+    badge: "Classic",
+    kind: "P2P Archive",
+    manifestUrl: "https://thepiratebay-plus.strem.fun/manifest.json",
+    configureUrl: null,
+    description:
+      "Broad torrent catalog for classic, indie, and hard-to-find Movies & Shows.",
+  },
+];
+
 // ── Persistence helpers ──────────────────────────────────────────────────────
 
 export function loadInstalledAddons() {
@@ -177,6 +242,45 @@ export function saveInstalledAddons(list) {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("streambert:addons-changed"));
   }
+}
+
+export async function installAddonFromUrl(rawUrl) {
+  const parsed = normalizeAddonUrl(rawUrl);
+  if (!parsed) {
+    throw new Error("Invalid https://.../manifest.json or stremio://... URL.");
+  }
+  const raw = await fetchJsonViaBridge(parsed.manifestUrl);
+  const check = validateStremioManifest(raw);
+  if (!check.valid) {
+    throw new Error(check.reason || "Invalid addon manifest.");
+  }
+  if (!check.supportsStream) {
+    throw new Error(
+      `"${check.name}" is a catalog/metadata addon only and does not provide streams.`,
+    );
+  }
+  const nextAddon = {
+    id: check.id,
+    name: check.name,
+    version: check.version,
+    description: check.description,
+    logo: check.logo,
+    types: check.types,
+    manifestUrl: parsed.manifestUrl,
+    baseUrl: parsed.baseUrl,
+    enabled: true,
+    installedAt: Date.now(),
+  };
+  const current = loadInstalledAddons();
+  const idx = current.findIndex(
+    (a) => a.id === nextAddon.id || a.baseUrl === nextAddon.baseUrl,
+  );
+  const updated =
+    idx >= 0
+      ? current.map((a, i) => (i === idx ? { ...a, ...nextAddon } : a))
+      : [...current, nextAddon];
+  saveInstalledAddons(updated);
+  return { addon: nextAddon, list: updated };
 }
 
 export async function fetchJsonViaBridge(url) {

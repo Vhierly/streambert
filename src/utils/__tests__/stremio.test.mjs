@@ -6,12 +6,14 @@ import {
   validateStremioManifest,
   buildStremioStreamUrl,
   normalizeAddonStreams,
+  FEATURED_COMMUNITY_ADDONS,
 } from "../stremio.js";
 import {
   parseYtsResponse,
   parseEztvResponse,
   parseAnimeToshoResponse,
 } from "../torrentSearch.js";
+import { parseSubtitleCues } from "../srtToVtt.js";
 
 const require = createRequire(import.meta.url);
 
@@ -164,4 +166,26 @@ test("parseYtsResponse, parseEztvResponse, and parseAnimeToshoResponse extract e
   assert.equal(tosho.length, 1);
   assert.equal(tosho[0].quality, "1080p");
   assert.equal(tosho[0].seeds, 150);
+});
+
+test("parseSubtitleCues parses SRT and ASS dialogue cues and strips formatting tags", () => {
+  const srt = `1\n00:00:01,500 --> 00:00:04,000\n<i>Halo dunia!</i>\nBaris kedua\n\n2\n00:01:05.250 --> 00:01:08.750\n{\\an8}Tes kedua`;
+  const cues = parseSubtitleCues(srt);
+  assert.equal(cues.length, 2);
+  assert.equal(cues[0].start, 1.5);
+  assert.equal(cues[0].end, 4);
+  assert.equal(cues[0].text, "Halo dunia!\nBaris kedua");
+  assert.equal(cues[1].text, "Tes kedua");
+
+  const ass = `[Events]\nDialogue: 0,0:00:10.00,0:00:12.50,Default,,0,0,0,,{\\pos(192,260)}Sub Indo\\NBaris 2`;
+  const assCues = parseSubtitleCues(ass);
+  assert.equal(assCues.length, 1);
+  assert.equal(assCues[0].start, 10);
+  assert.equal(assCues[0].end, 12.5);
+  assert.equal(assCues[0].text, "Sub Indo\nBaris 2");
+
+  assert.ok(FEATURED_COMMUNITY_ADDONS.length >= 5);
+  for (const addon of FEATURED_COMMUNITY_ADDONS) {
+    assert.match(addon.manifestUrl, /^https:\/\/.+\/manifest\.json$/);
+  }
 });

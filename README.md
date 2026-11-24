@@ -9,7 +9,7 @@
 [![CI Status](https://img.shields.io/github/actions/workflow/status/Vhierly/streambert/ci.yml?branch=main&label=CI%20%26%20Tests&style=for-the-badge)](https://github.com/Vhierly/streambert/actions)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue?style=for-the-badge)](LICENSE)
 
-[**⬇ Download Latest Installer (`v3.0.0`)**](https://github.com/Vhierly/streambert/releases/latest) · [**TMDB Token Guide**](tmdb-tutorial.md) · [**Report an Issue**](https://github.com/Vhierly/streambert/issues)
+[**⬇ Download Latest Installer**](https://github.com/Vhierly/streambert/releases/latest) · [**TMDB Token Guide**](tmdb-tutorial.md) · [**Report an Issue**](https://github.com/Vhierly/streambert/issues)
 
 </div>
 
