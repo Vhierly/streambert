@@ -58,6 +58,7 @@ import DownloadModal from "../components/DownloadModal";
 import BatchDownloadModal from "../components/BatchDownloadModal";
 import TrailerModal from "../components/TrailerModal";
 import BlockedStatsModal from "../components/BlockedStatsModal";
+import StremioStreamsModal from "../components/StremioStreamsModal";
 import { useBlockedStats } from "../utils/useBlockedStats";
 import {
   storage,
@@ -444,6 +445,7 @@ export default function TVPage({
   const [trailerKey, setTrailerKey] = useState(null);
   const [showTrailer, setShowTrailer] = useState(false);
   const [showCast, setShowCast] = useState(false);
+  const [showAddonsModal, setShowAddonsModal] = useState(false);
   const credits = useCredits("tv", item.id, apiKey);
   const [m3u8Url, setM3u8Url] = useState(null);
   const [interceptedSubs, setInterceptedSubs] = useState([]);
@@ -1872,6 +1874,15 @@ export default function TVPage({
                         <TrailerIcon /> Trailer
                       </button>
                     ))}
+                  {!restricted && (
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setShowAddonsModal(true)}
+                      title="Auto-search Episode Torrents & Stremio Addon streams"
+                    >
+                      🧲 Torrent / Addons
+                    </button>
+                  )}
                   <button
                     className="btn btn-secondary"
                     onClick={() => setShowCast(true)}
@@ -2799,6 +2810,33 @@ export default function TVPage({
           episode={selectedEp?.episode_number}
           posterPath={d.poster_path}
           tmdbId={item.id}
+        />
+      )}
+
+      {showAddonsModal && (
+        <StremioStreamsModal
+          mediaType="tv"
+          tmdbId={item.id}
+          apiKey={apiKey}
+          title={title}
+          season={selectedSeason}
+          episode={selectedEp?.episode_number || 1}
+          maxEpisodes={currentSeasonEpisodes?.length || null}
+          savedPct={
+            progress?.[
+              `tv_${item.id}_s${selectedSeason}e${selectedEp?.episode_number || 1}`
+            ] || 0
+          }
+          onSaveProgress={saveProgress}
+          onMarkWatched={onMarkWatched}
+          onOpenSettings={onSettings}
+          onDownloadStream={(stream) => {
+            setM3u8Url(stream.directUrl);
+            setInterceptedSubs(stream.subtitles || []);
+            setShowAddonsModal(false);
+            setShowDownload(true);
+          }}
+          onClose={() => setShowAddonsModal(false)}
         />
       )}
     </div>

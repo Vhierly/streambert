@@ -14,6 +14,67 @@ const TRAKT_AUTH_KEY = "traktPkceAuth";
 let _activePkceServer = null;
 let _traktRefreshPromise = null;
 
+// ── DNS-over-HTTPS (DoH) Anti-ISP Block Configuration ────────────────────────
+// Uses IP-literal DoH endpoints by default so zero plain-UDP bootstrap lookup
+// is needed (defeats transparent ISP DNS hijacking common in Indonesia).
+const DOH_PROVIDERS = {
+  cloudflare: "https://1.1.1.1/dns-query",
+  google: "https://8.8.8.8/dns-query",
+  quad9: "https://9.9.9.9:5053/dns-query",
+  adguard: "https://94.140.14.14/dns-query",
+};
+
+const dohSettingsFile = () =>
+  path.join(app.getPath("userData"), "doh-settings.json");
+
+function loadDohSettings() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(dohSettingsFile(), "utf8"));
+    return {
+      enabled: !!raw.enabled,
+      provider: raw.provider || "cloudflare",
+      customUrl: raw.customUrl || "",
+    };
+  } catch {
+    return { enabled: false, provider: "cloudflare", customUrl: "" };
+  }
+}
+
+function resolveDohTemplate(settings) {
+  if (!settings?.enabled) return null;
+  if (settings.provider === "custom") {
+    const u = String(settings.customUrl || "").trim();
+    return /^https:\/\/.+/i.test(u) ? u : null;
+  }
+  return DOH_PROVIDERS[settings.provider] || DOH_PROVIDERS.cloudflare;
+}
+
+function applyDohSettings(settings) {
+  try {
+    const serverTemplate = resolveDohTemplate(settings);
+    if (!serverTemplate) {
+      app.configureHostResolver({
+        enableBuiltInResolver: false,
+        secureDnsMode: "off",
+        secureDnsServers: [],
+      });
+    } else {
+      app.configureHostResolver({
+        enableBuiltInResolver: true,
+        secureDnsMode: "secure",
+        secureDnsServers: [serverTemplate],
+      });
+    }
+    return { ok: true, activeServer: serverTemplate };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function applySavedDohSettings() {
+  return applyDohSettings(loadDohSettings());
+}
+
 function toBase64Url(buf) {
   return Buffer.from(buf)
     .toString("base64")
@@ -392,6 +453,66 @@ function register() {
     return { ok: true };
   });
 
+  // ── DNS-over-HTTPS (DoH) IPC ───────────────────────────────────────────────
+  ipcMain.handle("get-doh-settings", () => loadDohSettings());
+
+  ipcMain.handle("set-doh-settings", (_, nextSettings) => {
+    try {
+      const clean = {
+        enabled: !!nextSettings?.enabled,
+        provider: String(nextSettings?.provider || "cloudflare"),
+        customUrl: String(nextSettings?.customUrl || "").trim().slice(0, 512),
+      };
+      fs.writeFileSync(dohSettingsFile(), JSON.stringify(clean, null, 2), "utf8");
+      return applyDohSettings(clean);
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle("test-doh-connection", async () => {
+    const t0 = Date.now();
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 6000);
+      const res = await net.fetch("https://1.1.1.1/cdn-cgi/trace", {
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      return { ok: res.ok, ms: Date.now() - t0 };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // ── Stremio Addon HTTP JSON Fetcher (CORS-free + uses Electron DoH) ────────
+  ipcMain.handle("stremio-fetch-json", async (_, rawUrl) => {
+    try {
+      const u = new URL(String(rawUrl || ""));
+      if (u.protocol !== "https:" && u.protocol !== "http:") {
+        return { ok: false, error: "Unsupported protocol" };
+      }
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12000);
+      try {
+        const res = await net.fetch(u.toString(), {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "Streambert/2.9",
+          },
+          signal: ctrl.signal,
+        });
+        if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+        const data = await res.json();
+        return { ok: true, data };
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
   ipcMain.handle("get-scheduled-backup-settings", () =>
     loadScheduledBackupSettings(),
   );
@@ -467,6 +588,7 @@ function register() {
 module.exports = {
   register,
   applySecretMigrationIfNeeded,
+  applySavedDohSettings,
   writeSecretMigration,
   loadScheduledBackupSettings,
   shouldRunScheduledBackup,

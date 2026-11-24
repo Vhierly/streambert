@@ -49,6 +49,7 @@ import {
 import DownloadModal from "../components/DownloadModal";
 import TrailerModal from "../components/TrailerModal";
 import BlockedStatsModal from "../components/BlockedStatsModal";
+import StremioStreamsModal from "../components/StremioStreamsModal";
 import { useBlockedStats } from "../utils/useBlockedStats";
 import MediaCard from "../components/MediaCard";
 import {
@@ -102,6 +103,7 @@ export default function MoviePage({
   const [trailerKey, setTrailerKey] = useState(null);
   const [showTrailer, setShowTrailer] = useState(false);
   const [showCast, setShowCast] = useState(false);
+  const [showAddonsModal, setShowAddonsModal] = useState(false);
   const credits = useCredits("movie", item.id, apiKey);
 
   const [m3u8Url, setM3u8Url] = useState(null);
@@ -930,6 +932,15 @@ export default function MoviePage({
                     <TrailerIcon /> Trailer
                   </button>
                 ))}
+              {!isUnreleased && !restricted && (
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setShowAddonsModal(true)}
+                  title="Auto-search Blu-Ray Torrents & Stremio Addon streams"
+                >
+                  🧲 Torrent / Addons
+                </button>
+              )}
               <button
                 className="btn btn-secondary"
                 onClick={() => setShowCast(true)}
@@ -1426,6 +1437,27 @@ export default function MoviePage({
           mediaType="movie"
           posterPath={d.poster_path}
           tmdbId={item.id}
+        />
+      )}
+
+      {showAddonsModal && (
+        <StremioStreamsModal
+          mediaType="movie"
+          tmdbId={item.id}
+          apiKey={apiKey}
+          title={title}
+          progressKey={progressKey}
+          savedPct={progress?.[progressKey] || 0}
+          onSaveProgress={saveProgress}
+          onMarkWatched={onMarkWatched}
+          onOpenSettings={onSettings}
+          onDownloadStream={(stream) => {
+            setM3u8Url(stream.directUrl);
+            setInterceptedSubs(stream.subtitles || []);
+            setShowAddonsModal(false);
+            setShowDownload(true);
+          }}
+          onClose={() => setShowAddonsModal(false)}
         />
       )}
     </div>

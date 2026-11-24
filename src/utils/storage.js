@@ -115,6 +115,8 @@ export const STORAGE_KEYS = {
   ANILIST_TOKEN: "anilistToken",
   TRAKT_CLIENT_ID: "traktClientId",
   TRAKT_TOKEN: "traktToken",
+  // Stremio Addons registry
+  STREMIO_ADDONS: "stremioAddons",
 };
 
 export const getApiKey = () => storage.get(STORAGE_KEYS.API_KEY);

@@ -62,6 +62,7 @@ const subtitlesIpc = require("./src/ipc/subtitles");
 const hianimeIpc = require("./src/ipc/hianime");
 const playerIpc = require("./src/ipc/player");
 const discordRpc = require("./src/ipc/discordRpc");
+const torrentStreamer = require("./src/ipc/torrentStreamer");
 
 // -- Ad/tracker block list -----------------------------------------------------
 const BLOCKED_HOSTS = [
@@ -642,6 +643,7 @@ playerIpc.register(getMainWindow, {
 });
 blockStats.init(getMainWindow);
 discordRpc.register(ipcMain);
+torrentStreamer.register();
 
 // get-block-stats lives with its data
 ipcMain.handle("get-block-stats", () => blockStats.getBlockStats());
@@ -830,6 +832,7 @@ if (!gotTheLock) {
 
   app.whenReady().then(() => {
     _bench("app ready");
+    storageIpc.applySavedDohSettings();
 
     // Local media streaming protocol with HTTP 206 Range support for LocalPlayerModal
     const MEDIA_MIME = {
@@ -895,7 +898,10 @@ if (!gotTheLock) {
     createWindow();
   });
   app.on("window-all-closed", () => app.quit());
-  app.on("before-quit", () => discordRpc.shutdown());
+  app.on("before-quit", () => {
+    discordRpc.shutdown();
+    torrentStreamer.shutdown();
+  });
   app.on("activate", () => {
     if (mainWindow === null) createWindow();
   });

@@ -237,11 +237,11 @@ function register(getMainWindow, { writeSecretMigration }) {
   );
 
   // ── Open a live stream URL (m3u8) in an external player (mpv / VLC) ────────
-  ipcMain.handle("open-stream-external", async (_, { url, title, subtitles } = {}) => {
+  ipcMain.handle("open-stream-external", async (_, { url, title, subtitles, headers } = {}) => {
     if (!isHttpUrl(url)) return { ok: false, error: "Invalid stream URL" };
 
     const platform = process.platform;
-    const meta = streamMeta.get(url) || {};
+    const meta = { ...(streamMeta.get(url) || {}), ...(headers || {}) };
     const safeTitle =
       typeof title === "string" ? title.replace(/[\r\n]/g, " ").slice(0, 200) : "";
     const subUrls = (Array.isArray(subtitles) ? subtitles : [])

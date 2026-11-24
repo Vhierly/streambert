@@ -33,6 +33,8 @@ import {
 import { collectBackupData, restoreBackupData } from "../utils/backup";
 import { formatBytes } from "../utils/storage";
 import AccountSyncSection from "../components/AccountSyncSection";
+import DohSettingsSection from "../components/DohSettingsSection";
+import StremioAddonsSection from "../components/StremioAddonsSection";
 
 // ── Custom Select ─────────────────────────────────────────────────────────────
 function SettingsSelect({ value, onChange, options, style }) {
@@ -2681,6 +2683,22 @@ const SECTION_NAV = [
     ],
   },
   {
+    id: "addons",
+    label: "Network & Addons",
+    icon: "🧩",
+    keywords: [
+      "stremio",
+      "addon",
+      "addons",
+      "doh",
+      "dns",
+      "isp",
+      "cloudflare",
+      "network",
+      "debrid",
+    ],
+  },
+  {
     id: "library",
     label: "Library",
     icon: "📚",
@@ -3374,6 +3392,7 @@ export default function SettingsPage({
   const secNotifications = useRef(null);
   const secDiscordRpc = useRef(null);
   const secInterface = useRef(null);
+  const secAddons = useRef(null);
   const secLibrary = useRef(null);
   const secBackup = useRef(null);
   const secStorage = useRef(null);
@@ -3387,6 +3406,7 @@ export default function SettingsPage({
     notifications: secNotifications,
     discordRpc: secDiscordRpc,
     interface: secInterface,
+    addons: secAddons,
     library: secLibrary,
     backup: secBackup,
     storage: secStorage,
@@ -4316,6 +4336,19 @@ export default function SettingsPage({
           <StartPageSection />
           <Divider />
           <AppearanceSection />
+        </div>
+
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        {/* GROUP: NETWORK & STREMIO ADDONS                                    */}
+        {/* ══════════════════════════════════════════════════════════════════ */}
+        <div ref={secAddons} style={{ scrollMarginTop: 80 }}>
+          <SectionGroupHeader
+            title="Network & Addons"
+            subtitle="Encrypted DNS-over-HTTPS (Anti-ISP Block) and Stremio v1 Addon Bridge"
+          />
+          <DohSettingsSection />
+          <Divider />
+          <StremioAddonsSection />
         </div>
 
         {/* ══════════════════════════════════════════════════════════════════ */}

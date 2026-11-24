@@ -16,6 +16,7 @@ export const BACKUP_KEYS = [
   "libraryCollections",
   "anilistSyncEnabled",
   "traktSyncEnabled",
+  "stremioAddons",
   // UI / layout preferences
   "homeRowOrder",
   "homeRowVisible",

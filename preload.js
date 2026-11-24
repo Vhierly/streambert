@@ -151,6 +151,13 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("trakt-pkce-login", clientId),
   traktGetValidAuth: () => ipcRenderer.invoke("trakt-get-valid-auth"),
   traktLogout: () => ipcRenderer.invoke("trakt-logout"),
+  // DNS-over-HTTPS (DoH) Anti-ISP Block
+  getDohSettings: () => ipcRenderer.invoke("get-doh-settings"),
+  setDohSettings: (settings) =>
+    ipcRenderer.invoke("set-doh-settings", settings),
+  testDohConnection: () => ipcRenderer.invoke("test-doh-connection"),
+  // Stremio Addon Bridge
+  stremioFetchJson: (url) => ipcRenderer.invoke("stremio-fetch-json", url),
   // Picture-in-Picture pop-out (full player UI, only one stream active at a time)
   openPipWindow: (url, title, userAgent = null) =>
     ipcRenderer.invoke("open-pip-window", { url, title, userAgent }),
@@ -218,6 +225,12 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("discord-rpc-set-enabled", enabled),
   discordRpcUpdateActivity: (activity) =>
     ipcRenderer.invoke("discord-rpc-update-activity", activity),
+
+  // Instant Sequential Torrent Streamer
+  startTorrentStream: (opts) =>
+    ipcRenderer.invoke("start-torrent-stream", opts),
+  getTorrentStatus: () => ipcRenderer.invoke("get-torrent-status"),
+  stopTorrentStream: (opts) => ipcRenderer.invoke("stop-torrent-stream", opts),
 });
 
 if (process.platform === "darwin") {
