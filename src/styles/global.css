@@ -4516,3 +4516,33 @@ html[data-win-titlebar][data-maximized] .main {
     justify-content: center;
     padding: 28px 0 8px;
 }
+
+
+/* ── Library 2.0 Watch Stats Cards ──────────────────────────────────────── */
+.lib-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 14px;
+}
+
+.lib-stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+}
+
+.lib-stat-value {
+    font-family: var(--font-display);
+    font-size: 36px;
+    line-height: 1;
+    letter-spacing: 0.5px;
+    color: var(--red);
+    margin-bottom: 6px;
+}
+
+.lib-stat-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text3);
+}

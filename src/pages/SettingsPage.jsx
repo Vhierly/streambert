@@ -32,6 +32,7 @@ import {
 } from "../utils/homeLayout";
 import { collectBackupData, restoreBackupData } from "../utils/backup";
 import { formatBytes } from "../utils/storage";
+import AccountSyncSection from "../components/AccountSyncSection";
 
 // ── Custom Select ─────────────────────────────────────────────────────────────
 function SettingsSelect({ value, onChange, options, style }) {
@@ -4090,7 +4091,7 @@ export default function SettingsPage({
 
           {/* Intro Skip */}
           <div style={{ marginBottom: 40 }}>
-            <div className="settings-section-title">Anime Intro Skip</div>
+            <div className="settings-section-title">Intro &amp; Outro Skip</div>
             <div
               style={{
                 fontSize: 13,
@@ -4103,12 +4104,11 @@ export default function SettingsPage({
               <span style={{ color: "var(--text)", fontWeight: 600 }}>
                 AniSkip
               </span>{" "}
-              to detect and skip opening/ending segments. Only active for animes
-              and when using{" "}
+              (Anime on HiAnime) and{" "}
               <span style={{ color: "var(--text)", fontWeight: 600 }}>
-                HiAnime
+                TheIntroDB
               </span>{" "}
-              as source.
+              (Live-Action Series) to detect and skip opening/ending segments.
             </div>
             <div
               style={{
@@ -4324,9 +4324,11 @@ export default function SettingsPage({
         <div ref={secLibrary} style={{ scrollMarginTop: 80 }}>
           <SectionGroupHeader
             title="Library"
-            subtitle="Watchlist sort order and watch history preferences"
+            subtitle="Watchlist sort order, watch history, and external account sync"
           />
           <LibraryPrivacySection />
+          <Divider />
+          <AccountSyncSection apiKey={apiKey} />
         </div>
 
         {/* ══════════════════════════════════════════════════════════════════ */}

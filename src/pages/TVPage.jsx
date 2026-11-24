@@ -55,6 +55,7 @@ import {
   CastIcon,
 } from "../components/Icons";
 import DownloadModal from "../components/DownloadModal";
+import BatchDownloadModal from "../components/BatchDownloadModal";
 import TrailerModal from "../components/TrailerModal";
 import BlockedStatsModal from "../components/BlockedStatsModal";
 import { useBlockedStats } from "../utils/useBlockedStats";
@@ -67,6 +68,8 @@ import {
 } from "../utils/storage";
 import { useAutoplay } from "../utils/useAutoplay";
 import { fetchAniSkipTimings } from "../utils/aniSkip";
+import { fetchLiveIntroTimings } from "../utils/introSkip";
+import { useSourceHealth, getHealthIndicator } from "../utils/sourceHealth";
 import {
   fetchTVRating,
   isRestricted,
@@ -452,6 +455,8 @@ export default function TVPage({
   const playerAccentColor = playerSettings?.accentColor ?? null;
   const playerSubLang = playerSettings?.subtitleLang ?? null;
   const [showSourceMenu, setShowSourceMenu] = useState(false);
+  const [showBatchModal, setShowBatchModal] = useState(false);
+  const sourceHealth = useSourceHealth(showSourceMenu);
   // Derived from playerSource, computed once per render instead of 5-6× inline
   const isAsync = useMemo(() => sourceIsAsync(playerSource), [playerSource]);
   const supportsProgress = useMemo(
@@ -1305,27 +1310,38 @@ export default function TVPage({
     };
   }, [playing, playerSource, isAsync, item.id, selectedEp?.episode_number]);
 
-  // ── AniSkip: fetch timings when episode changes ───────────────────────────
+  // ── Intro/Outro Skip: AniSkip for Anime + TheIntroDB for Live-Action ──────
   useEffect(() => {
     setSkipTimings(null);
     setSkipPrompt(null);
-    if (introSkipMode === "off" || !isAsync || !isAnime) return;
-    const anilistId = anilistData?.idMal;
+    if (introSkipMode === "off") return;
     const epNum = selectedEp?.episode_number;
-    if (!anilistId || !epNum) return;
+    if (!epNum) return;
 
     let cancelled = false;
-    fetchAniSkipTimings(anilistId, epNum).then((timings) => {
-      if (!cancelled) setSkipTimings(timings);
-    });
+    if (isAnime && isAsync) {
+      const malId = anilistData?.idMal;
+      if (!malId) return;
+      fetchAniSkipTimings(malId, epNum).then((timings) => {
+        if (!cancelled) setSkipTimings(timings);
+      });
+    } else if (!isAnime && supportsProgress) {
+      fetchLiveIntroTimings(item.id, selectedSeason, epNum).then((timings) => {
+        if (!cancelled) setSkipTimings(timings);
+      });
+    }
     return () => {
       cancelled = true;
     };
   }, [
     anilistData?.idMal,
+    item.id,
+    selectedSeason,
     selectedEp?.episode_number,
     playerSource,
     isAnime,
+    isAsync,
+    supportsProgress,
     introSkipMode,
   ]);
 
@@ -1365,7 +1381,10 @@ export default function TVPage({
   // Skip detection runs every tick, progress is saved every 5th tick (5s).
   useEffect(() => {
     const aniSkipActive =
-      introSkipMode !== "off" && playing && !!skipTimings && isAsync;
+      introSkipMode !== "off" &&
+      playing &&
+      !!skipTimings &&
+      (isAsync || (!isAnime && supportsProgress));
 
     if (!aniSkipActive) setSkipPrompt(null);
     if (!playing || !currentProgressKey) return;
@@ -2377,6 +2396,21 @@ export default function TVPage({
                               {src.note}
                             </span>
                           )}
+                          {(() => {
+                            const h = getHealthIndicator(sourceHealth[src.id]);
+                            return h ? (
+                              <span
+                                style={{
+                                  marginLeft: "auto",
+                                  fontSize: 10,
+                                  color: h.color,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                ● {h.label}
+                              </span>
+                            ) : null;
+                          })()}
                         </button>
                       ),
                     )}
@@ -2598,7 +2632,40 @@ export default function TVPage({
                     </button>
                   );
                 })}
+                {isAnime &&
+                  !loadingSeason &&
+                  currentSeasonEpisodes?.length > 0 && (
+                    <button
+                      type="button"
+                      className="season-btn"
+                      style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}
+                      onClick={() => setShowBatchModal(true)}
+                      title="Queue multiple episodes from this season for download"
+                    >
+                      <DownloadIcon /> Batch Season
+                    </button>
+                  )}
               </div>
+            )}
+            {showBatchModal && (
+              <BatchDownloadModal
+                showTitle={title}
+                searchTitles={[
+                  anilistSeasons?.find((s) => s.seasonNum === selectedSeason)?.title,
+                  anilistData?.title?.english,
+                  anilistData?.title?.romaji,
+                  title,
+                  d?.original_name,
+                ]}
+                seasonNumber={selectedSeason}
+                episodes={currentSeasonEpisodes || []}
+                watched={watched}
+                tmdbId={item.id}
+                posterPath={d?.poster_path || item.poster_path}
+                dubMode={dubMode}
+                onDownloadStarted={onDownloadStarted}
+                onClose={() => setShowBatchModal(false)}
+              />
             )}
             {selectedSeason === 0 && !loadingSeason && (
               <div

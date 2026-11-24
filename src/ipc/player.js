@@ -1,6 +1,6 @@
 // ── IPC: Player launch, window controls, auto-updater ─────────────────────────
 
-const { ipcMain, shell, app } = require("electron");
+const { ipcMain, shell, app, net } = require("electron");
 const { spawn, spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -75,6 +75,10 @@ const cleanHeader = (v, max = 4096) =>
 
 function hasStreamMeta(url) {
   return streamMeta.has(url);
+}
+
+function getStreamMeta(url) {
+  return streamMeta.get(url) || null;
 }
 
 function rememberStreamMeta(url, meta = {}) {
@@ -448,6 +452,52 @@ function register(getMainWindow, { writeSecretMigration }) {
   });
 
   ipcMain.handle("get-platform", () => process.platform);
+
+  // ── Read local subtitle text for in-app LocalPlayerModal (.srt/.vtt) ──────
+  ipcMain.handle("read-subtitle-text", async (_, filePath) => {
+    const safeSub = validateMediaPath(filePath, ALLOWED_SUBTITLE_EXTENSIONS);
+    if (!safeSub) return { ok: false, error: "Invalid subtitle path" };
+    try {
+      const stat = await fs.promises.stat(safeSub);
+      if (stat.size > 4 * 1024 * 1024) {
+        return { ok: false, error: "Subtitle file too large" };
+      }
+      const text = await fs.promises.readFile(safeSub, "utf8");
+      return { ok: true, text };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // ── Lightweight latency ping for PLAYER_SOURCES ───────────────────────────
+  ipcMain.handle("ping-player-sources", async (_, targets = []) => {
+    if (!Array.isArray(targets)) return {};
+    const out = {};
+    await Promise.all(
+      targets.slice(0, 15).map(async ({ id, url }) => {
+        if (!id || !isHttpUrl(url)) return;
+        const t0 = Date.now();
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 3500);
+        try {
+          const res = await net.fetch(url, {
+            method: "HEAD",
+            redirect: "follow",
+            signal: ctrl.signal,
+          });
+          out[id] = {
+            ok: res.status < 500,
+            ms: Date.now() - t0,
+          };
+        } catch {
+          out[id] = { ok: false, ms: null };
+        } finally {
+          clearTimeout(timer);
+        }
+      }),
+    );
+    return out;
+  });
 
   // ── Get video duration via ffprobe ────────────────────────────────────────
   ipcMain.handle("get-video-duration", async (_, filePath) => {
@@ -990,4 +1040,5 @@ module.exports = {
   registerAudioDeviceRecovery,
   rememberStreamMeta,
   hasStreamMeta,
+  getStreamMeta,
 };

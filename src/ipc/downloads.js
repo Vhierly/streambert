@@ -1,16 +1,15 @@
 // ── IPC: Downloads ────────────────────────────────────────────────────────────
-// Manages the download queue, spawns the downloader binary, tracks progress,
-// and handles all download-related IPC handlers.
+// Manages the download queue (concurrency cap, pause/resume/retry), spawns
+// vid-dl-cli-only or system yt-dlp, tracks progress, and handles download IPC.
 
 const { app, ipcMain, shell, dialog, session } = require("electron");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
+const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
 const http = require("http");
 const os = require("os");
-
-// ── Download store ────────────────────────────────────────────────────────────
 
 let downloads = [];
 let _downloadsFile = null;
@@ -18,14 +17,40 @@ const downloadsFile = () =>
   _downloadsFile ||
   (_downloadsFile = path.join(app.getPath("userData"), "downloads.json"));
 
+let _queueCfgFile = null;
+const queueCfgFile = () =>
+  _queueCfgFile ||
+  (_queueCfgFile = path.join(app.getPath("userData"), "downloads-queue.json"));
+
+let maxConcurrent = 2;
+
+function loadQueueConfig() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(queueCfgFile(), "utf8"));
+    const n = Number(raw?.maxConcurrent);
+    if (n >= 1 && n <= 5) maxConcurrent = Math.floor(n);
+  } catch {}
+}
+
+function saveQueueConfig() {
+  try {
+    fs.writeFileSync(
+      queueCfgFile(),
+      JSON.stringify({ maxConcurrent }, null, 2),
+    );
+  } catch {}
+}
+
 // Track running child processes by download id
 const activeProcs = new Map();
+// Track intentional pauses so the close handler marks "paused" instead of "error"
+const pausedIds = new Set();
 
-// ── Trusted binary registry ───────────────────────────────────────────────────
-// Maps session tokens (returned to the Renderer)
-const trustedBinaryPaths = new Map(); // token (uuid) → absolute binary path
+// Maps session tokens -> { binaryPath, engine: "vid-dl" | "yt-dlp" }
+const trustedBinaryPaths = new Map();
 
 let _getMainWindow = () => null;
+let _getStreamMeta = () => null;
 
 function sendProgress(update) {
   const mw = _getMainWindow();
@@ -35,10 +60,10 @@ function sendProgress(update) {
 }
 
 function loadDownloads() {
+  loadQueueConfig();
   try {
     const raw = fs.readFileSync(downloadsFile(), "utf8");
     const parsed = JSON.parse(raw);
-    // Deduplicate: keep only the newest entry per (tmdbId, mediaType, season, episode)
     const seen = new Map();
     const sorted = [...parsed].sort(
       (a, b) =>
@@ -46,6 +71,12 @@ function loadDownloads() {
         (a.completedAt || a.startedAt || 0),
     );
     for (const d of sorted) {
+      // Any item that was mid-download or queued when the app exited becomes "interrupted"
+      if (d.status === "downloading" || d.status === "queued") {
+        d.status = "interrupted";
+        d.speed = "";
+        d.lastMessage = "Interrupted — click Resume to continue";
+      }
       const key =
         d.tmdbId && d.mediaType
           ? `${d.tmdbId}|${d.mediaType}|${d.season ?? ""}|${d.episode ?? ""}`
@@ -60,9 +91,8 @@ function loadDownloads() {
 
 function saveDownloads() {
   try {
-    const toSave = downloads.filter(
-      (d) => d.status !== "downloading" && d.status !== "error",
-    );
+    // Strip internal runtime fields (_bin, _ffmpegTotalSecs) before persisting
+    const toSave = downloads.map(({ _bin, _ffmpegTotalSecs, ...rest }) => rest);
     fs.writeFileSync(downloadsFile(), JSON.stringify(toSave, null, 2));
   } catch {}
 }
@@ -91,22 +121,178 @@ function cleanupTempFiles(downloadPath) {
 
 function killAllDownloads() {
   for (const [id, proc] of activeProcs.entries()) {
+    pausedIds.add(id);
     try {
       proc.kill("SIGKILL");
     } catch {}
     const idx = downloads.findIndex((d) => d.id === id);
     if (idx !== -1) {
-      downloads[idx].status = "error";
-      downloads[idx].lastMessage = "Cancelled on exit";
+      downloads[idx].status = "interrupted";
+      downloads[idx].speed = "";
+      downloads[idx].lastMessage = "Interrupted on exit — click Resume";
     }
     activeProcs.delete(id);
   }
-  const folders = new Set(downloads.map((d) => d.downloadPath).filter(Boolean));
-  for (const folder of folders) cleanupTempFiles(folder);
+  for (const d of downloads) {
+    if (d.status === "queued") {
+      d.status = "interrupted";
+      d.lastMessage = "Interrupted on exit — click Resume";
+    }
+  }
   saveDownloads();
 }
 
-// ── Subtitle file downloader (used during run-download completion) ─────────────
+// ── Downloader binary resolution (vid-dl-cli-only OR yt-dlp) ──────────────────
+
+function findSystemYtDlp() {
+  const candidates =
+    process.platform === "win32"
+      ? ["yt-dlp", "yt-dlp.exe"]
+      : process.platform === "darwin"
+        ? ["/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp", "yt-dlp"]
+        : ["/usr/bin/yt-dlp", "/usr/local/bin/yt-dlp", "yt-dlp"];
+  const whichCmd = process.platform === "win32" ? "where" : "which";
+  for (const c of candidates) {
+    if (path.isAbsolute(c)) {
+      if (fs.existsSync(c)) return c;
+      continue;
+    }
+    try {
+      const r = spawnSync(whichCmd, [c], { encoding: "utf8", timeout: 4000 });
+      if (r.status === 0 && r.stdout.trim()) {
+        return r.stdout.trim().split(/\r?\n/)[0].trim();
+      }
+    } catch {}
+  }
+  return null;
+}
+
+function resolveDownloader(folderPath) {
+  // 1. Check user-configured folder first (if provided)
+  if (folderPath) {
+    try {
+      const entries = fs.readdirSync(folderPath);
+      // Direct yt-dlp binary inside chosen folder
+      const ytdlpInFolder = entries.find((e) =>
+        /^yt-dlp(\.exe)?$/i.test(e),
+      );
+      if (ytdlpInFolder) {
+        const full = path.join(folderPath, ytdlpInFolder);
+        if (fs.statSync(full).isFile()) {
+          return {
+            exists: true,
+            binaryPath: full,
+            engine: "yt-dlp",
+            label: "yt-dlp (folder)",
+          };
+        }
+      }
+
+      // vid-dl-cli-only structure (_internal + executable)
+      if (!entries.includes("_internal")) {
+        const sysYt = findSystemYtDlp();
+        if (sysYt) {
+          return {
+            exists: true,
+            binaryPath: sysYt,
+            engine: "yt-dlp",
+            label: "yt-dlp (system PATH)",
+          };
+        }
+        return { exists: false, reason: "no_internal" };
+      }
+
+      const binary = entries.find((e) => {
+        if (e === "_internal" || e.startsWith(".")) return false;
+        try {
+          const stat = fs.statSync(path.join(folderPath, e));
+          if (!stat.isFile()) return false;
+          return process.platform === "win32"
+            ? e.endsWith(".exe")
+            : !!(stat.mode & 0o111);
+        } catch {
+          return false;
+        }
+      });
+      if (!binary) return { exists: false, reason: "no_executable" };
+      return {
+        exists: true,
+        binaryPath: path.join(folderPath, binary),
+        engine: "vid-dl",
+        label: binary,
+      };
+    } catch (e) {
+      const sysYt = findSystemYtDlp();
+      if (sysYt) {
+        return {
+          exists: true,
+          binaryPath: sysYt,
+          engine: "yt-dlp",
+          label: "yt-dlp (system PATH)",
+        };
+      }
+      const reason =
+        e.code === "EACCES" ? "folder_permission" : "folder_unreadable";
+      return { exists: false, reason };
+    }
+  }
+
+  // 2. Fallback: auto-detect yt-dlp on system PATH
+  const sysYt = findSystemYtDlp();
+  if (sysYt) {
+    return {
+      exists: true,
+      binaryPath: sysYt,
+      engine: "yt-dlp",
+      label: "yt-dlp (system PATH)",
+    };
+  }
+  return { exists: false, reason: "no_folder" };
+}
+
+function buildDownloadCliArgs(entry, binInfo) {
+  const safeName =
+    String(entry.name || "video")
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim() || "video";
+
+  if (binInfo.engine === "yt-dlp") {
+    const meta = entry.streamHeaders || _getStreamMeta?.(entry.m3u8Url) || {};
+    const args = [
+      "--newline",
+      "--continue",
+      "--concurrent-fragments",
+      "6",
+      "--merge-output-format",
+      "mp4",
+      "-o",
+      path.join(entry.downloadPath, `${safeName}.%(ext)s`),
+    ];
+    if (meta.referer) args.push("--referer", meta.referer);
+    if (meta.userAgent) args.push("--user-agent", meta.userAgent);
+    if (meta.origin) args.push("--add-header", `Origin:${meta.origin}`);
+    args.push("--", entry.m3u8Url);
+    return args;
+  }
+
+  return [
+    "--cli",
+    entry.m3u8Url,
+    "-f",
+    "mp4 (with Audio)",
+    "-r",
+    "best",
+    "-b",
+    "320",
+    "-n",
+    entry.name,
+    "-d",
+    entry.downloadPath,
+  ];
+}
+
+// ── Subtitle file downloader ──────────────────────────────────────────────────
 
 function downloadSubtitleFile(url, destPath) {
   return new Promise((resolve) => {
@@ -175,48 +361,473 @@ function downloadSubtitleFile(url, destPath) {
   });
 }
 
-// ── IPC registration ──────────────────────────────────────────────────────────
+// ── Queue runner & process spawning ───────────────────────────────────────────
 
-function register(getMainWindow) {
-  _getMainWindow = getMainWindow;
+function pumpQueue() {
+  while (activeProcs.size < maxConcurrent) {
+    const nextEntry = downloads.find((d) => d.status === "queued" && d._bin);
+    if (!nextEntry) break;
+    spawnDownloadEntry(nextEntry);
+  }
+}
 
-  // ── downloader binary detection ──────────────────────────────────────────
-  ipcMain.handle("check-downloader", (_, folderPath) => {
-    if (!folderPath) return { exists: false, reason: "no_folder" };
-    let entries;
-    try {
-      entries = fs.readdirSync(folderPath);
-    } catch (e) {
-      const reason =
-        e.code === "EACCES" ? "folder_permission" : "folder_unreadable";
-      return { exists: false, reason };
-    }
-    if (!entries.includes("_internal")) {
-      return { exists: false, reason: "no_internal" };
-    }
-    const binary = entries.find((e) => {
-      if (e === "_internal" || e.startsWith(".")) return false;
-      try {
-        const stat = fs.statSync(path.join(folderPath, e));
-        if (!stat.isFile()) return false;
-        return process.platform === "win32"
-          ? e.endsWith(".exe")
-          : !!(stat.mode & 0o111);
-      } catch {
-        return false;
-      }
+function spawnDownloadEntry(entry) {
+  const { id, name, m3u8Url, downloadPath } = entry;
+  const binInfo = entry._bin;
+  if (!binInfo?.binaryPath) {
+    entry.status = "error";
+    entry.lastMessage = "Downloader binary not configured";
+    sendProgress({
+      id,
+      status: "error",
+      lastMessage: entry.lastMessage,
     });
-    if (!binary) return { exists: false, reason: "no_executable" };
+    saveDownloads();
+    return;
+  }
 
-    // Store the validated path in the Main process only and hand a token to
-    // the Renderer.  The Renderer passes the token back when starting a
-    // download; the real path is never exposed outside the Main process.
-    const token = crypto.randomUUID();
-    trustedBinaryPaths.set(token, path.join(folderPath, binary));
-    return { exists: true, token };
+  const logPath =
+    entry.logPath || path.join(os.tmpdir(), `streambert_dl_${id}.log`);
+  entry.logPath = logPath;
+  entry.status = "downloading";
+  entry.lastMessage = "Starting…";
+  pausedIds.delete(id);
+
+  sendProgress({
+    id,
+    name: entry.name,
+    status: "downloading",
+    progress: entry.progress || 0,
+    lastMessage: "Starting…",
   });
 
-  // ── start download ────────────────────────────────────────────────────────
+  try {
+    fs.appendFileSync(
+      logPath,
+      `\nStreambert Download (${binInfo.engine})\nName: ${name}\nURL: ${m3u8Url}\nStarted: ${new Date().toISOString()}\n${"─".repeat(60)}\n`,
+      "utf8",
+    );
+  } catch {}
+
+  const args = buildDownloadCliArgs(entry, binInfo);
+  const proc = spawn(binInfo.binaryPath, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  activeProcs.set(id, proc);
+
+  const handleLine = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const idx = downloads.findIndex((d) => d.id === id);
+    if (idx === -1) return;
+
+    const update = {};
+
+    const fragMatch = trimmed.match(/\(frag\s+(\d+)\/(\d+)\)/);
+    if (fragMatch) {
+      const currentFrag = parseInt(fragMatch[1], 10);
+      const total = parseInt(fragMatch[2], 10);
+      update.completedFragments = currentFrag;
+      update.totalFragments = total;
+      update.progress = Math.min(99, Math.round((currentFrag / total) * 100));
+      update.lastMessage = `Fragment ${currentFrag} / ${total}`;
+    }
+
+    if (!fragMatch && !downloads[idx].totalFragments) {
+      const dlPctMatch = trimmed.match(
+        /^\[download\]\s+([\d.]+)%\s+of\s+~?\s*([\d.]+\s*(?:[KMGT]i?B|B))/i,
+      );
+      if (dlPctMatch) {
+        const pct = parseFloat(dlPctMatch[1]);
+        update.progress = Math.min(99, Math.round(pct));
+        update.size = dlPctMatch[2].trim();
+        const spMatch = trimmed.match(/\bat\s+([\d.]+\s*(?:[KMGT]i?B|B)\/s)/i);
+        if (spMatch) update.speed = spMatch[1].trim();
+        update.lastMessage = `${Math.round(pct)}% of ${update.size}`;
+      }
+    }
+
+    const durationMatch = trimmed.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
+    if (durationMatch) {
+      const totalSecs =
+        parseInt(durationMatch[1], 10) * 3600 +
+        parseInt(durationMatch[2], 10) * 60 +
+        parseFloat(durationMatch[3]);
+      if (totalSecs > 0) downloads[idx]._ffmpegTotalSecs = totalSecs;
+      return;
+    }
+
+    const ffmpegMatch = trimmed.match(
+      /size=\s*([\d.]+\s*\w+)\s+time=(\d+):(\d+):([\d.]+)/i,
+    );
+    if (ffmpegMatch) {
+      const elapsedSecs =
+        parseInt(ffmpegMatch[2], 10) * 3600 +
+        parseInt(ffmpegMatch[3], 10) * 60 +
+        parseFloat(ffmpegMatch[4]);
+      const totalSecs = downloads[idx]._ffmpegTotalSecs || 0;
+      if (totalSecs > 0) {
+        update.progress = Math.min(
+          99,
+          Math.round((elapsedSecs / totalSecs) * 100),
+        );
+      }
+      const rawSize = ffmpegMatch[1].trim();
+      const kbMatch = rawSize.match(/([\d.]+)\s*kB/i);
+      if (kbMatch) {
+        const mb = parseFloat(kbMatch[1]) / 1024;
+        update.size =
+          mb >= 1024
+            ? `${(mb / 1024).toFixed(1)} GiB`
+            : `${mb.toFixed(1)} MiB`;
+      } else {
+        update.size = rawSize;
+      }
+      const speedXMatch = trimmed.match(/speed=\s*([\d.]+)x/i);
+      if (speedXMatch) update.speed = `${speedXMatch[1]}x`;
+      update.lastMessage = `Processing… ${update.size}${update.speed ? ` at ${update.speed}` : ""}`;
+    }
+
+    const retryMatch =
+      trimmed.match(/Retrying\s+\(\d+\/\d+\)/i) ||
+      trimmed.match(/Got error:.*timed?\s*out/i) ||
+      trimmed.match(/Read timed? out/i);
+    if (retryMatch) {
+      update.speed = "0 MB/s";
+      const retryNumMatch = trimmed.match(/Retrying\s+\((\d+)\/(\d+)\)/i);
+      update.lastMessage = retryNumMatch
+        ? `Retrying… (${retryNumMatch[1]}/${retryNumMatch[2]})`
+        : "Retrying…";
+      downloads[idx] = { ...downloads[idx], ...update };
+      sendProgress({ id, ...update, status: downloads[idx].status });
+      return;
+    }
+
+    const speedMatch = trimmed.match(/\bat\s+([\d.]+\s*(?:[KMGT]i?B|B)\/s)/i);
+    if (speedMatch) update.speed = speedMatch[1].trim();
+
+    const sizeMatch = trimmed.match(
+      /\bof\s+~?\s*([\d.]+\s*(?:[KMGT]i?B|B))\b/i,
+    );
+    if (sizeMatch) update.size = sizeMatch[1].trim();
+
+    const fragTotalMatch = trimmed.match(/Total fragments:\s+(\d+)/);
+    if (fragTotalMatch) {
+      const total = parseInt(fragTotalMatch[1], 10);
+      const u = {
+        totalFragments: total,
+        completedFragments: 0,
+        lastMessage: `HLS: ${total} fragments`,
+      };
+      downloads[idx] = { ...downloads[idx], ...u };
+      sendProgress({ id, ...u, status: downloads[idx].status });
+      return;
+    }
+
+    const destMatch = trimmed.match(/^\[download\] Destination:\s+(.+)/);
+    if (destMatch) {
+      const u = {
+        filePath: destMatch[1].trim(),
+        lastMessage: "Downloading…",
+      };
+      downloads[idx] = { ...downloads[idx], ...u };
+      sendProgress({ id, ...u, status: downloads[idx].status });
+      return;
+    }
+
+    const mergeMatch = trimmed.match(/\[Merger\] Merging formats into "(.+)"/);
+    if (mergeMatch) {
+      const u = {
+        filePath: mergeMatch[1].trim(),
+        lastMessage: "Merging…",
+        progress: 99,
+      };
+      downloads[idx] = { ...downloads[idx], ...u };
+      sendProgress({ id, ...u, status: downloads[idx].status });
+      return;
+    }
+
+    const SUPPRESS_PATTERNS = [
+      /Sleeping\s+[\d.]+\s+seconds/i,
+      /^\[yt-dlp\s+DEBUG\]/i,
+      /^\[debug\]/i,
+    ];
+    if (Object.keys(update).length === 0) {
+      const suppress =
+        downloads[idx].lastMessage.startsWith("Fragment") ||
+        downloads[idx].lastMessage.startsWith("Retrying") ||
+        SUPPRESS_PATTERNS.some((p) => p.test(trimmed));
+      if (!suppress) update.lastMessage = trimmed;
+    }
+
+    if (Object.keys(update).length > 0) {
+      downloads[idx] = { ...downloads[idx], ...update };
+      sendProgress({ id, ...update, status: downloads[idx].status });
+    }
+  };
+
+  let buf = "";
+  let stderrBuf = "";
+
+  const appendLog = (line) => {
+    try {
+      fs.appendFileSync(logPath, line + "\n", "utf8");
+    } catch {}
+  };
+
+  proc.stdout.on("data", (chunk) => {
+    buf += chunk.toString();
+    const lines = buf.split(/\r\n|\r|\n/);
+    buf = lines.pop();
+    lines.forEach((l) => {
+      appendLog(l);
+      handleLine(l);
+    });
+  });
+  proc.stderr.on("data", (chunk) => {
+    const text = chunk.toString();
+    stderrBuf += text;
+    text.split(/\r\n|\r|\n/).forEach((l) => {
+      appendLog(l);
+      handleLine(l);
+    });
+  });
+
+  proc.on("error", (err) => {
+    activeProcs.delete(id);
+    const idx = downloads.findIndex((d) => d.id === id);
+    if (idx !== -1) {
+      const msg =
+        err.code === "EACCES"
+          ? `Permission denied: ${binInfo.binaryPath}`
+          : err.code === "ENOENT"
+            ? `Binary not found: ${binInfo.binaryPath}`
+            : `Failed to start downloader: ${err.message}`;
+      downloads[idx].status = "error";
+      downloads[idx].completedAt = Date.now();
+      downloads[idx].lastMessage = msg;
+      appendLog(msg);
+      sendProgress({ id, status: "error", lastMessage: msg });
+      saveDownloads();
+    }
+    pumpQueue();
+  });
+
+  proc.on("close", (code) => {
+    activeProcs.delete(id);
+    if (buf.trim()) {
+      appendLog(buf.trim());
+      handleLine(buf.trim());
+    }
+    const idx = downloads.findIndex((d) => d.id === id);
+    if (idx === -1) {
+      pumpQueue();
+      return;
+    }
+
+    // Intentional pause: preserve partial fragments & paused status
+    if (pausedIds.has(id)) {
+      pausedIds.delete(id);
+      if (downloads[idx].status !== "interrupted") {
+        downloads[idx].status = "paused";
+        downloads[idx].speed = "";
+        downloads[idx].lastMessage = "Paused";
+        sendProgress({
+          id,
+          status: "paused",
+          speed: "",
+          lastMessage: "Paused",
+          progress: downloads[idx].progress,
+        });
+      }
+      saveDownloads();
+      pumpQueue();
+      return;
+    }
+
+    const status = code === 0 ? "completed" : "error";
+    downloads[idx].status = status;
+    downloads[idx].completedAt = Date.now();
+    if (code === 0) {
+      downloads[idx].progress = 100;
+      downloads[idx].speed = "";
+      downloads[idx].logPath = null;
+      try {
+        fs.unlinkSync(logPath);
+      } catch {}
+    } else {
+      try {
+        fs.appendFileSync(
+          logPath,
+          `${"─".repeat(60)}\nFailed: exit code ${code}\nFinished: ${new Date().toISOString()}\n`,
+          "utf8",
+        );
+      } catch {}
+      const errorLine =
+        stderrBuf
+          .split(/\r\n|\r|\n/)
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .reverse()
+          .find((l) => /error|failed|unable|cannot|denied/i.test(l)) || "";
+      const prev = downloads[idx].lastMessage || "";
+      const base = errorLine || prev;
+      downloads[idx].lastMessage = base
+        ? `${base} (exit ${code})`
+        : `Download failed (exit code ${code})`;
+    }
+
+    if (code === 0 && !downloads[idx].filePath) {
+      try {
+        const VIDEO_EXTS = [".mp4", ".mkv", ".webm", ".avi", ".ts", ".m4v"];
+        const match = fs
+          .readdirSync(downloadPath)
+          .filter((f) => VIDEO_EXTS.some((e) => f.toLowerCase().endsWith(e)))
+          .map((f) => ({
+            f,
+            mtime: fs.statSync(path.join(downloadPath, f)).mtimeMs,
+          }))
+          .sort((a, b) => b.mtime - a.mtime)[0];
+        if (match) downloads[idx].filePath = path.join(downloadPath, match.f);
+      } catch {}
+    }
+
+    if (code === 0 && downloads[idx].filePath) {
+      try {
+        const ext = path.extname(downloads[idx].filePath) || ".mp4";
+        const safeName = name
+          .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (safeName) {
+          const newPath = path.join(downloadPath, safeName + ext);
+          if (newPath !== downloads[idx].filePath) {
+            fs.renameSync(downloads[idx].filePath, newPath);
+            downloads[idx].filePath = newPath;
+          }
+        }
+      } catch {}
+    }
+
+    if (downloads[idx].filePath) {
+      try {
+        const bytes = fs.statSync(downloads[idx].filePath).size;
+        downloads[idx].size =
+          bytes > 1e9
+            ? (bytes / 1e9).toFixed(2) + " GB"
+            : bytes > 1e6
+              ? (bytes / 1e6).toFixed(1) + " MB"
+              : bytes > 1e3
+                ? (bytes / 1e3).toFixed(1) + " KB"
+                : bytes + " B";
+      } catch {}
+    }
+
+    if (
+      code === 0 &&
+      downloads[idx].subtitles?.length > 0 &&
+      downloads[idx].filePath
+    ) {
+      const videoBase = downloads[idx].filePath.replace(/\.[^.]+$/, "");
+      const langCounter = {};
+      const KNOWN_SUB_EXTS = [".vtt", ".srt", ".ass", ".ssa", ".sub", ".idx"];
+      const subPromises = downloads[idx].subtitles.map(
+        ({ url, lang, name: subName, file_id }) => {
+          const urlClean = url.split("?")[0].split("#")[0];
+          const urlExt = path
+            .extname(urlClean)
+            .toLowerCase()
+            .replace(/[^a-z0-9.]/g, "");
+          const nameExt = subName
+            ? path
+                .extname(subName)
+                .toLowerCase()
+                .replace(/[^a-z0-9.]/g, "")
+            : "";
+          const subExt = KNOWN_SUB_EXTS.includes(urlExt)
+            ? urlExt
+            : KNOWN_SUB_EXTS.includes(nameExt)
+              ? nameExt
+              : ".srt";
+          const safeLang = (lang || "unknown").replace(/[^a-z0-9_-]/gi, "");
+          const lIdx = langCounter[safeLang] ?? 0;
+          langCounter[safeLang] = lIdx + 1;
+          const suffix = lIdx > 0 ? `.${lIdx}` : "";
+          const subDestPath = `${videoBase}.${safeLang}${suffix}${subExt}`;
+          return downloadSubtitleFile(url, subDestPath).then((ok) =>
+            ok
+              ? {
+                  lang: lang || "unknown",
+                  path: subDestPath,
+                  file_id: file_id || null,
+                }
+              : null,
+          );
+        },
+      );
+      Promise.all(subPromises).then((results) => {
+        const i2 = downloads.findIndex((d) => d.id === id);
+        if (i2 !== -1) {
+          downloads[i2].subtitlePaths = results.filter(Boolean);
+          saveDownloads();
+          sendProgress({
+            id,
+            subtitlePaths: downloads[i2].subtitlePaths,
+          });
+        }
+      });
+    }
+
+    sendProgress({
+      id,
+      name,
+      status: downloads[idx].status,
+      progress: downloads[idx].progress,
+      completedAt: downloads[idx].completedAt,
+      filePath: downloads[idx].filePath,
+      size: downloads[idx].size,
+      completedFragments: downloads[idx].completedFragments,
+      totalFragments: downloads[idx].totalFragments,
+      lastMessage: downloads[idx].lastMessage,
+      logPath: downloads[idx].logPath,
+    });
+    saveDownloads();
+    pumpQueue();
+  });
+}
+
+// ── IPC registration ──────────────────────────────────────────────────────────
+
+function register(getMainWindow, getStreamMeta = null) {
+  _getMainWindow = getMainWindow;
+  if (typeof getStreamMeta === "function") _getStreamMeta = getStreamMeta;
+
+  ipcMain.handle("check-downloader", (_, folderPath) => {
+    const resolved = resolveDownloader(folderPath);
+    if (!resolved.exists) return resolved;
+    const token = crypto.randomUUID();
+    trustedBinaryPaths.set(token, {
+      binaryPath: resolved.binaryPath,
+      engine: resolved.engine,
+    });
+    return {
+      exists: true,
+      token,
+      engine: resolved.engine,
+      label: resolved.label,
+    };
+  });
+
+  ipcMain.handle("get-download-concurrency", () => maxConcurrent);
+
+  ipcMain.handle("set-download-concurrency", (_, value) => {
+    const n = Math.max(1, Math.min(5, Math.floor(Number(value) || 2)));
+    maxConcurrent = n;
+    saveQueueConfig();
+    pumpQueue();
+    return { ok: true, maxConcurrent };
+  });
+
   ipcMain.handle(
     "run-download",
     (
@@ -233,16 +844,28 @@ function register(getMainWindow) {
         posterPath,
         tmdbId,
         subtitles,
+        streamHeaders,
       },
     ) => {
       try {
-        // Resolve the binary path from trusted registry.
-        const binaryPath = trustedBinaryPaths.get(token);
-        if (!binaryPath) {
+        let binInfo = token ? trustedBinaryPaths.get(token) : null;
+        if (!binInfo) {
+          const fallback = resolveDownloader("");
+          if (fallback.exists) {
+            binInfo = {
+              binaryPath: fallback.binaryPath,
+              engine: fallback.engine,
+            };
+          }
+        }
+        if (!binInfo) {
           return { ok: false, error: "Invalid or unknown downloader token" };
         }
+
         const id = crypto.randomUUID();
-        const logPath = path.join(os.tmpdir(), `streambert_dl_${id}.log`);
+        const capturedMeta =
+          streamHeaders || _getStreamMeta?.(m3u8Url) || null;
+        const shouldQueue = activeProcs.size >= maxConcurrent;
 
         const entry = {
           id,
@@ -250,13 +873,15 @@ function register(getMainWindow) {
           m3u8Url,
           downloadPath,
           filePath: null,
-          status: "downloading",
+          status: shouldQueue ? "queued" : "downloading",
           progress: 0,
           speed: "",
           size: "",
           totalFragments: 0,
           completedFragments: 0,
-          lastMessage: "Starting…",
+          lastMessage: shouldQueue
+            ? "Queued — waiting for slot"
+            : "Starting…",
           startedAt: Date.now(),
           completedAt: null,
           mediaId: mediaId || null,
@@ -267,21 +892,12 @@ function register(getMainWindow) {
           tmdbId: tmdbId || mediaId || null,
           subtitles: Array.isArray(subtitles) ? subtitles : [],
           subtitlePaths: [],
-          logPath,
+          streamHeaders: capturedMeta,
+          engine: binInfo.engine,
+          logPath: null,
+          _bin: binInfo,
         };
 
-        // Create log file with header
-        try {
-          fs.writeFileSync(
-            logPath,
-            `Streambert Download Log\nName: ${name}\nURL: ${m3u8Url}\nStarted: ${new Date().toISOString()}\n${"─".repeat(60)}\n`,
-            "utf8",
-          );
-        } catch {}
-
-        downloads.push(entry);
-
-        // Remove stale entries for the same media
         const isSameMedia = (d) =>
           d.id !== id &&
           d.tmdbId &&
@@ -290,439 +906,92 @@ function register(getMainWindow) {
           String(d.season ?? "") === String(entry.season ?? "") &&
           String(d.episode ?? "") === String(entry.episode ?? "");
         downloads = downloads.filter((d) => !isSameMedia(d));
+        downloads.push(entry);
+        saveDownloads();
 
-        const args = [
-          "--cli",
-          m3u8Url,
-          "-f",
-          "mp4 (with Audio)",
-          "-r",
-          "best",
-          "-b",
-          "320",
-          "-n",
-          name,
-          "-d",
-          downloadPath,
-        ];
+        if (!shouldQueue) {
+          spawnDownloadEntry(entry);
+        }
 
-        const proc = spawn(binaryPath, args, {
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        activeProcs.set(id, proc);
-
-        const handleLine = (line) => {
-          const trimmed = line.trim();
-          if (!trimmed) return;
-          const idx = downloads.findIndex((d) => d.id === id);
-          if (idx === -1) return;
-
-          const update = {};
-
-          // (frag N/total), source of truth for HLS progress
-          const fragMatch = trimmed.match(/\(frag\s+(\d+)\/(\d+)\)/);
-          if (fragMatch) {
-            const currentFrag = parseInt(fragMatch[1]);
-            const total = parseInt(fragMatch[2]);
-            update.completedFragments = currentFrag;
-            update.totalFragments = total;
-            update.progress = Math.min(
-              99,
-              Math.round((currentFrag / total) * 100),
-            );
-            update.lastMessage = `Fragment ${currentFrag} / ${total}`;
-          }
-
-          // [download] X% of Y (direct mp4, no fragments)
-          if (!fragMatch && !downloads[idx].totalFragments) {
-            const dlPctMatch = trimmed.match(
-              /^\[download\]\s+([\d.]+)%\s+of\s+~?\s*([\d.]+\s*(?:[KMGT]i?B|B))/i,
-            );
-            if (dlPctMatch) {
-              const pct = parseFloat(dlPctMatch[1]);
-              update.progress = Math.min(99, Math.round(pct));
-              update.size = dlPctMatch[2].trim();
-              const spMatch = trimmed.match(
-                /\bat\s+([\d.]+\s*(?:[KMGT]i?B|B)\/s)/i,
-              );
-              if (spMatch) update.speed = spMatch[1].trim();
-              update.lastMessage = `${Math.round(pct)}% of ${update.size}`;
-            }
-          }
-
-          // ffmpeg Duration line
-          const durationMatch = trimmed.match(
-            /Duration:\s*(\d+):(\d+):([\d.]+)/,
-          );
-          if (durationMatch) {
-            const totalSecs =
-              parseInt(durationMatch[1]) * 3600 +
-              parseInt(durationMatch[2]) * 60 +
-              parseFloat(durationMatch[3]);
-            if (totalSecs > 0) downloads[idx]._ffmpegTotalSecs = totalSecs;
-            return;
-          }
-
-          // ffmpeg progress: size=… time=…
-          const ffmpegMatch = trimmed.match(
-            /size=\s*([\d.]+\s*\w+)\s+time=(\d+):(\d+):([\d.]+)/i,
-          );
-          if (ffmpegMatch) {
-            const elapsedSecs =
-              parseInt(ffmpegMatch[2]) * 3600 +
-              parseInt(ffmpegMatch[3]) * 60 +
-              parseFloat(ffmpegMatch[4]);
-            const totalSecs = downloads[idx]._ffmpegTotalSecs || 0;
-            if (totalSecs > 0) {
-              update.progress = Math.min(
-                99,
-                Math.round((elapsedSecs / totalSecs) * 100),
-              );
-            }
-            const rawSize = ffmpegMatch[1].trim();
-            const kbMatch = rawSize.match(/([\d.]+)\s*kB/i);
-            if (kbMatch) {
-              const mb = parseFloat(kbMatch[1]) / 1024;
-              update.size =
-                mb >= 1024
-                  ? `${(mb / 1024).toFixed(1)} GiB`
-                  : `${mb.toFixed(1)} MiB`;
-            } else {
-              update.size = rawSize;
-            }
-            const speedXMatch = trimmed.match(/speed=\s*([\d.]+)x/i);
-            if (speedXMatch) update.speed = `${speedXMatch[1]}x`;
-            update.lastMessage = `Processing… ${update.size}${update.speed ? ` at ${update.speed}` : ""}`;
-          }
-
-          // Retry / timeout
-          const retryMatch =
-            trimmed.match(/Retrying\s+\(\d+\/\d+\)/i) ||
-            trimmed.match(/Got error:.*timed?\s*out/i) ||
-            trimmed.match(/Read timed? out/i);
-          if (retryMatch) {
-            update.speed = "0 MB/s";
-            const retryNumMatch = trimmed.match(/Retrying\s+\((\d+)\/(\d+)\)/i);
-            update.lastMessage = retryNumMatch
-              ? `Retrying… (${retryNumMatch[1]}/${retryNumMatch[2]})`
-              : "Retrying…";
-            downloads[idx] = { ...downloads[idx], ...update };
-            sendProgress({ id, ...update, status: downloads[idx].status });
-            return;
-          }
-
-          const speedMatch = trimmed.match(
-            /\bat\s+([\d.]+\s*(?:[KMGT]i?B|B)\/s)/i,
-          );
-          if (speedMatch) update.speed = speedMatch[1].trim();
-
-          const sizeMatch = trimmed.match(
-            /\bof\s+~?\s*([\d.]+\s*(?:[KMGT]i?B|B))\b/i,
-          );
-          if (sizeMatch) update.size = sizeMatch[1].trim();
-
-          // [hlsnative] Total fragments: N
-          const fragTotalMatch = trimmed.match(/Total fragments:\s+(\d+)/);
-          if (fragTotalMatch) {
-            const total = parseInt(fragTotalMatch[1]);
-            const u = {
-              totalFragments: total,
-              completedFragments: 0,
-              lastMessage: `HLS: ${total} fragments`,
-            };
-            downloads[idx] = { ...downloads[idx], ...u };
-            sendProgress({ id, ...u, status: downloads[idx].status });
-            return;
-          }
-
-          // [download] Destination: /path/file
-          const destMatch = trimmed.match(/^\[download\] Destination:\s+(.+)/);
-          if (destMatch) {
-            const u = {
-              filePath: destMatch[1].trim(),
-              lastMessage: "Downloading…",
-            };
-            downloads[idx] = { ...downloads[idx], ...u };
-            sendProgress({ id, ...u, status: downloads[idx].status });
-            return;
-          }
-
-          // [Merger] output path
-          const mergeMatch = trimmed.match(
-            /\[Merger\] Merging formats into "(.+)"/,
-          );
-          if (mergeMatch) {
-            const u = {
-              filePath: mergeMatch[1].trim(),
-              lastMessage: "Merging…",
-              progress: 99,
-            };
-            downloads[idx] = { ...downloads[idx], ...u };
-            sendProgress({ id, ...u, status: downloads[idx].status });
-            return;
-          }
-
-          const SUPPRESS_PATTERNS = [
-            /Sleeping\s+[\d.]+\s+seconds/i,
-            /^\[yt-dlp\s+DEBUG\]/i,
-            /^\[debug\]/i,
-          ];
-          if (Object.keys(update).length === 0) {
-            const suppress =
-              downloads[idx].lastMessage.startsWith("Fragment") ||
-              downloads[idx].lastMessage.startsWith("Retrying") ||
-              SUPPRESS_PATTERNS.some((p) => p.test(trimmed));
-            if (!suppress) update.lastMessage = trimmed;
-          }
-
-          if (Object.keys(update).length > 0) {
-            downloads[idx] = { ...downloads[idx], ...update };
-            sendProgress({ id, ...update, status: downloads[idx].status });
-          }
-        };
-
-        let buf = "";
-        let stderrBuf = "";
-
-        const appendLog = (line) => {
-          try {
-            fs.appendFileSync(logPath, line + "\n", "utf8");
-          } catch {}
-        };
-
-        proc.stdout.on("data", (chunk) => {
-          buf += chunk.toString();
-          const lines = buf.split(/\r\n|\r|\n/);
-          buf = lines.pop();
-          lines.forEach((l) => {
-            appendLog(l);
-            handleLine(l);
-          });
-        });
-        proc.stderr.on("data", (chunk) => {
-          const text = chunk.toString();
-          stderrBuf += text;
-          text.split(/\r\n|\r|\n/).forEach((l) => {
-            appendLog(l);
-            handleLine(l);
-          });
-        });
-
-        proc.on("error", (err) => {
-          activeProcs.delete(id);
-          const idx = downloads.findIndex((d) => d.id === id);
-          if (idx === -1) return;
-          const msg =
-            err.code === "EACCES"
-              ? `Permission denied, binary is not executable: ${binaryPath}`
-              : err.code === "ENOENT"
-                ? `Binary not found: ${binaryPath}`
-                : `Failed to start downloader: ${err.message}`;
-          downloads[idx].status = "error";
-          downloads[idx].completedAt = Date.now();
-          downloads[idx].lastMessage = msg;
-          appendLog(msg);
-          sendProgress({ id, status: "error", lastMessage: msg });
-        });
-
-        proc.on("close", (code) => {
-          activeProcs.delete(id);
-          if (buf.trim()) {
-            appendLog(buf.trim());
-            handleLine(buf.trim());
-          }
-          const idx = downloads.findIndex((d) => d.id === id);
-          if (idx === -1) return;
-
-          const status = code === 0 ? "completed" : "error";
-          downloads[idx].status = status;
-          downloads[idx].completedAt = Date.now();
-          if (code === 0) {
-            downloads[idx].progress = 100;
-            // Success: delete log file, clear logPath
-            downloads[idx].logPath = null;
-            try {
-              fs.unlinkSync(logPath);
-            } catch {}
-          } else {
-            // Failure: append footer to log and keep the path
-            try {
-              fs.appendFileSync(
-                logPath,
-                `${"─".repeat(60)}\nFailed: exit code ${code}\nFinished: ${new Date().toISOString()}\n`,
-                "utf8",
-              );
-            } catch {}
-            // Extract most meaningful error line from stderr
-            const errorLine =
-              stderrBuf
-                .split(/\r\n|\r|\n/)
-                .map((l) => l.trim())
-                .filter(Boolean)
-                .reverse()
-                .find((l) => /error|failed|unable|cannot|denied/i.test(l)) ||
-              "";
-            const prev = downloads[idx].lastMessage || "";
-            const base = errorLine || prev;
-            downloads[idx].lastMessage = base
-              ? `${base} (exit ${code})`
-              : `Download failed (exit code ${code})`;
-          }
-
-          // Detect output file if destination line wasn't caught
-          if (code === 0 && !downloads[idx].filePath) {
-            try {
-              const VIDEO_EXTS = [
-                ".mp4",
-                ".mkv",
-                ".webm",
-                ".avi",
-                ".ts",
-                ".m4v",
-              ];
-              const match = fs
-                .readdirSync(downloadPath)
-                .filter((f) =>
-                  VIDEO_EXTS.some((e) => f.toLowerCase().endsWith(e)),
-                )
-                .map((f) => ({
-                  f,
-                  mtime: fs.statSync(path.join(downloadPath, f)).mtimeMs,
-                }))
-                .sort((a, b) => b.mtime - a.mtime)[0];
-              if (match)
-                downloads[idx].filePath = path.join(downloadPath, match.f);
-            } catch {}
-          }
-
-          // Rename file to proper media name
-          if (code === 0 && downloads[idx].filePath) {
-            try {
-              const ext = path.extname(downloads[idx].filePath) || ".mp4";
-              const safeName = name
-                .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
-                .replace(/\s+/g, " ")
-                .trim();
-              if (safeName) {
-                const newPath = path.join(downloadPath, safeName + ext);
-                if (newPath !== downloads[idx].filePath) {
-                  fs.renameSync(downloads[idx].filePath, newPath);
-                  downloads[idx].filePath = newPath;
-                }
-              }
-            } catch {}
-          }
-
-          // Real file size from disk
-          if (downloads[idx].filePath) {
-            try {
-              const bytes = fs.statSync(downloads[idx].filePath).size;
-              downloads[idx].size =
-                bytes > 1e9
-                  ? (bytes / 1e9).toFixed(2) + " GB"
-                  : bytes > 1e6
-                    ? (bytes / 1e6).toFixed(1) + " MB"
-                    : bytes > 1e3
-                      ? (bytes / 1e3).toFixed(1) + " KB"
-                      : bytes + " B";
-            } catch {}
-          }
-
-          // Download subtitle files
-          if (
-            code === 0 &&
-            downloads[idx].subtitles?.length > 0 &&
-            downloads[idx].filePath
-          ) {
-            const videoBase = downloads[idx].filePath.replace(/\.[^.]+$/, "");
-            const langCounter = {};
-            const KNOWN_SUB_EXTS = [
-              ".vtt",
-              ".srt",
-              ".ass",
-              ".ssa",
-              ".sub",
-              ".idx",
-            ];
-            const subPromises = downloads[idx].subtitles.map(
-              ({ url, lang, name: subName, file_id }) => {
-                const urlClean = url.split("?")[0].split("#")[0];
-                const urlExt = path
-                  .extname(urlClean)
-                  .toLowerCase()
-                  .replace(/[^a-z0-9.]/g, "");
-                const nameExt = subName
-                  ? path
-                      .extname(subName)
-                      .toLowerCase()
-                      .replace(/[^a-z0-9.]/g, "")
-                  : "";
-                const subExt = KNOWN_SUB_EXTS.includes(urlExt)
-                  ? urlExt
-                  : KNOWN_SUB_EXTS.includes(nameExt)
-                    ? nameExt
-                    : ".srt";
-                const safeLang = (lang || "unknown").replace(
-                  /[^a-z0-9_-]/gi,
-                  "",
-                );
-                const lIdx = langCounter[safeLang] ?? 0;
-                langCounter[safeLang] = lIdx + 1;
-                const suffix = lIdx > 0 ? `.${lIdx}` : "";
-                const subDestPath = `${videoBase}.${safeLang}${suffix}${subExt}`;
-                return downloadSubtitleFile(url, subDestPath).then((ok) =>
-                  ok
-                    ? {
-                        lang: lang || "unknown",
-                        path: subDestPath,
-                        file_id: file_id || null,
-                      }
-                    : null,
-                );
-              },
-            );
-            Promise.all(subPromises).then((results) => {
-              const i2 = downloads.findIndex((d) => d.id === id);
-              if (i2 !== -1) {
-                downloads[i2].subtitlePaths = results.filter(Boolean);
-                saveDownloads();
-                sendProgress({
-                  id,
-                  subtitlePaths: downloads[i2].subtitlePaths,
-                });
-              }
-            });
-          }
-
-          sendProgress({
-            id,
-            name,
-            status: downloads[idx].status,
-            progress: downloads[idx].progress,
-            completedAt: downloads[idx].completedAt,
-            filePath: downloads[idx].filePath,
-            size: downloads[idx].size,
-            completedFragments: downloads[idx].completedFragments,
-            totalFragments: downloads[idx].totalFragments,
-            lastMessage: downloads[idx].lastMessage,
-            logPath: downloads[idx].logPath,
-          });
-          saveDownloads();
-        });
-
-        return { ok: true, id };
+        return { ok: true, id, status: entry.status };
       } catch (e) {
         return { ok: false, error: e.message };
       }
     },
   );
 
-  ipcMain.handle("get-downloads", () => downloads);
+  ipcMain.handle("pause-download", (_, { id }) => {
+    const idx = downloads.findIndex((d) => d.id === id);
+    if (idx === -1) return { ok: false, error: "Download not found" };
+
+    if (downloads[idx].status === "queued") {
+      downloads[idx].status = "paused";
+      downloads[idx].lastMessage = "Paused";
+      saveDownloads();
+      sendProgress({ id, status: "paused", lastMessage: "Paused" });
+      return { ok: true };
+    }
+
+    const proc = activeProcs.get(id);
+    if (proc) {
+      pausedIds.add(id);
+      try {
+        proc.kill("SIGKILL");
+      } catch {}
+      activeProcs.delete(id);
+    }
+    downloads[idx].status = "paused";
+    downloads[idx].speed = "";
+    downloads[idx].lastMessage = "Paused";
+    saveDownloads();
+    sendProgress({ id, status: "paused", speed: "", lastMessage: "Paused" });
+    pumpQueue();
+    return { ok: true };
+  });
+
+  ipcMain.handle("resume-download", (_, { id, folderPath } = {}) => {
+    const idx = downloads.findIndex((d) => d.id === id);
+    if (idx === -1) return { ok: false, error: "Download not found" };
+    const entry = downloads[idx];
+    if (!entry.m3u8Url || !entry.downloadPath) {
+      return { ok: false, error: "Missing stream URL or download folder" };
+    }
+    if (!entry._bin) {
+      const resolved = resolveDownloader(folderPath || "");
+      if (!resolved.exists) {
+        return {
+          ok: false,
+          error:
+            "Downloader binary not found. Configure downloader folder or install yt-dlp.",
+        };
+      }
+      entry._bin = {
+        binaryPath: resolved.binaryPath,
+        engine: resolved.engine,
+      };
+    }
+
+    entry.status = "queued";
+    entry.lastMessage = "Queued — waiting for slot";
+    saveDownloads();
+    sendProgress({
+      id,
+      status: "queued",
+      lastMessage: entry.lastMessage,
+    });
+    pumpQueue();
+    return { ok: true };
+  });
+
+  ipcMain.handle("get-downloads", () =>
+    downloads.map(({ _bin, _ffmpegTotalSecs, ...rest }) => rest),
+  );
 
   ipcMain.handle("delete-download", (_, { id, filePath }) => {
     try {
       const dlEntry = downloads.find((d) => d.id === id);
       if (activeProcs.has(id)) {
+        pausedIds.delete(id);
         try {
           activeProcs.get(id).kill("SIGKILL");
         } catch {}
@@ -739,9 +1008,10 @@ function register(getMainWindow) {
         } catch {}
       }
       const dlPath = dlEntry?.downloadPath;
-      if (dlPath) cleanupTempFiles(dlPath);
+      if (dlPath && activeProcs.size === 0) cleanupTempFiles(dlPath);
       downloads = downloads.filter((d) => d.id !== id);
       saveDownloads();
+      pumpQueue();
       return { ok: true };
     } catch (e) {
       return { ok: false, error: e.message };
@@ -822,9 +1092,8 @@ function register(getMainWindow) {
       }
     } catch {}
   });
+
   ipcMain.handle("open-path", (_, filePath) => {
-    // If the path points to a file (e.g. an .asar archive or an executable),
-    // open its containing folder instead so the OS file manager actually shows something
     try {
       const stat = fs.statSync(filePath);
       if (stat.isDirectory()) {
@@ -833,19 +1102,17 @@ function register(getMainWindow) {
         shell.showItemInFolder(filePath);
       }
     } catch {
-      // Path doesn't exist or stat failed
       shell.openPath(filePath);
     }
   });
+
   ipcMain.handle("get-install-path", () => {
     if (process.env.APPIMAGE) {
       return path.dirname(process.env.APPIMAGE);
     }
-
     if (app.isPackaged) {
       return path.dirname(process.execPath);
     }
-
     return app.getAppPath();
   });
 

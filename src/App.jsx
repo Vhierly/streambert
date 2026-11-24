@@ -19,6 +19,7 @@ import {
 import { collectBackupData } from "./utils/backup";
 import { tmdbFetch, setApiErrorHandlers, imgUrl } from "./utils/api";
 import { clearAppCaches } from "./utils/storage";
+import { scrobbleWatchedKey } from "./utils/syncProviders";
 import {
   readDiscordRpcSettings,
   applyDiscordRpcEnabled,
@@ -498,7 +499,10 @@ export default function App() {
 
   // Active download count for sidebar badge
   const activeDownloadCount = useMemo(
-    () => downloads.filter((d) => d.status === "downloading").length,
+    () =>
+      downloads.filter(
+        (d) => d.status === "downloading" || d.status === "queued",
+      ).length,
     [downloads],
   );
 
@@ -552,12 +556,19 @@ export default function App() {
     fetchTrending();
   }, [offline, fetchTrending]);
 
-  // ── Sync librarySort when changed from Settings ───────────────────────────
+  // ── Sync librarySort & imported watchlist when changed from Settings ─────
   useEffect(() => {
     const handler = (e) => setLibrarySort(e.detail);
+    const onImported = () => {
+      setSaved(storage.get("saved") || {});
+      setSavedOrder(storage.get("savedOrder") || null);
+    };
     window.addEventListener("streambert:library-sort-changed", handler);
-    return () =>
+    window.addEventListener("streambert:library-imported", onImported);
+    return () => {
       window.removeEventListener("streambert:library-sort-changed", handler);
+      window.removeEventListener("streambert:library-imported", onImported);
+    };
   }, []);
 
   // ── Re-fetch trending immediately when metadata language changes ──────────
@@ -893,13 +904,17 @@ export default function App() {
     });
   }, []); // no deps needed
 
-  const markWatched = useCallback((key) => {
-    setWatched((prev) => {
-      const next = { ...prev, [key]: true };
-      storage.set("watched", next);
-      return next;
-    });
-  }, []);
+  const markWatched = useCallback(
+    (key) => {
+      setWatched((prev) => {
+        const next = { ...prev, [key]: true };
+        storage.set("watched", next);
+        return next;
+      });
+      scrobbleWatchedKey(key, apiKey);
+    },
+    [apiKey],
+  );
 
   const markUnwatched = useCallback((key) => {
     setWatched((prev) => {
@@ -1144,6 +1159,7 @@ export default function App() {
                 onMarkWatched={markWatched}
                 onMarkUnwatched={markUnwatched}
                 onRemoveHistory={removeHistory}
+                apiKey={apiKey}
               />
             )}
             {page === "settings" && (

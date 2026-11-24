@@ -73,6 +73,7 @@ import {
   GAMEPAD_CLEANUP_JS,
 } from "../utils/playerGamepadScript";
 import { useSourceId } from "../utils/useSourceId";
+import { useSourceHealth, getHealthIndicator } from "../utils/sourceHealth";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 import HiAnimeLoader from "../components/HiAnimeLoader";
 
@@ -118,6 +119,7 @@ export default function MoviePage({
     [playerSource],
   );
   const [showSourceMenu, setShowSourceMenu] = useState(false);
+  const sourceHealth = useSourceHealth(showSourceMenu);
   const [dubMode, setDubMode] = useState(
     () => storage.get(STORAGE_KEYS.HIANIME_DUB_MODE) || "sub",
   );
@@ -1263,6 +1265,21 @@ export default function MoviePage({
                     {src.note && (
                       <span className="source-dropdown__note">{src.note}</span>
                     )}
+                    {(() => {
+                      const h = getHealthIndicator(sourceHealth[src.id]);
+                      return h ? (
+                        <span
+                          style={{
+                            marginLeft: "auto",
+                            fontSize: 10,
+                            color: h.color,
+                            fontWeight: 600,
+                          }}
+                        >
+                          ● {h.label}
+                        </span>
+                      ) : null;
+                    })()}
                   </button>
                 ))}
               </div>

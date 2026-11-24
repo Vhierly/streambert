@@ -436,10 +436,10 @@ export default function DownloadModal({
     "https://github.com/truelockmc/vid-dl-cli-only/releases/latest";
 
   useEffect(() => {
-    if (!downloaderFolder || !isElectron) return;
+    if (!isElectron) return;
     let mounted = true;
     setChecking(true);
-    window.electron.checkDownloader(downloaderFolder).then((result) => {
+    window.electron.checkDownloader(downloaderFolder || "").then((result) => {
       if (!mounted) return;
       setDownloader(result);
       setChecking(false);
@@ -592,12 +592,13 @@ export default function DownloadModal({
         m3u8Url,
         downloadPath,
         filePath: null,
-        status: "downloading",
+        status: result.status || "downloading",
         progress: 0,
         speed: "",
         size: "",
         totalFragments: 0,
-        lastMessage: "Starting…",
+        lastMessage:
+          result.status === "queued" ? "Queued — waiting for slot" : "Starting…",
         startedAt: Date.now(),
         completedAt: null,
         mediaId,
@@ -1197,7 +1198,8 @@ export default function DownloadModal({
               {downloader?.exists && (
                 <div className="download-ready">
                   <div className="download-found-badge">
-                    ✓ Video Downloader found
+                    ✓ Video Downloader ready
+                    {downloader.label ? ` (${downloader.label})` : ""}
                   </div>
 
                   <div

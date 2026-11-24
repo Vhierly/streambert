@@ -7,13 +7,17 @@ import {
   FilmIcon,
   WatchedIcon,
   SubtitlesIcon,
+  ExternalLinkIcon,
 } from "../components/Icons";
 import { storage, isElectron, STORAGE_KEYS } from "../utils/storage";
 import SubtitleDownloaderModal from "../components/SubtitleDownloaderModal";
+import LocalPlayerModal from "../components/LocalPlayerModal";
 import { imgUrl } from "../utils/api";
 
 const STATUS_CLASS = {
   downloading: "dl-status--downloading",
+  queued: "dl-status--downloading",
+  paused: "dl-status--interrupted",
   completed: "dl-status--completed",
   error: "dl-status--error",
   interrupted: "dl-status--interrupted",
@@ -21,6 +25,8 @@ const STATUS_CLASS = {
 
 const STATUS_LABEL = {
   downloading: "Downloading",
+  queued: "Queued",
+  paused: "Paused",
   completed: "Completed",
   error: "Error",
   interrupted: "Interrupted",
@@ -106,6 +112,15 @@ export default function DownloadsPage({
   );
   const highlightRef = useRef(null);
   const [subtitleModalDl, setSubtitleModalDl] = useState(null);
+  const [localPlayerItem, setLocalPlayerItem] = useState(null);
+  const [concurrency, setConcurrency] = useState(2);
+
+  useEffect(() => {
+    if (!window.electron?.getDownloadConcurrency) return;
+    window.electron.getDownloadConcurrency().then((n) => {
+      if (n >= 1 && n <= 5) setConcurrency(n);
+    });
+  }, []);
 
   // ── Toolbar state ─────────────────────────────────────────────
   const [showUntracked, setShowUntracked] = useState(
@@ -158,14 +173,25 @@ export default function DownloadsPage({
 
   // ── Stable derived lists ──────────────────────────────────────
   const active = useMemo(
-    () => downloads.filter((d) => d.status === "downloading"),
+    () =>
+      downloads.filter(
+        (d) =>
+          d.status === "downloading" ||
+          d.status === "queued" ||
+          d.status === "paused",
+      ),
     [downloads],
   );
 
   const finished = useMemo(
     () =>
       downloads
-        .filter((d) => d.status !== "downloading")
+        .filter(
+          (d) =>
+            d.status !== "downloading" &&
+            d.status !== "queued" &&
+            d.status !== "paused",
+        )
         .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)),
     [downloads],
   );
@@ -448,8 +474,34 @@ export default function DownloadsPage({
           </button>
         </div>
 
-        {/* Right: untracked toggle + search shortcut hint */}
+        {/* Right: concurrency + untracked toggle + search shortcut hint */}
         <div className="dl-toolbar__group">
+          {isElectron && (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                marginRight: 4,
+              }}
+              title="Max simultaneous downloads"
+            >
+              <span className="dl-toolbar__label">Queue</span>
+              {[1, 2, 3, 4].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className={`dl-toolbar__sort-btn${concurrency === n ? " dl-toolbar__sort-btn--active" : ""}`}
+                  onClick={() => {
+                    setConcurrency(n);
+                    window.electron?.setDownloadConcurrency?.(n);
+                  }}
+                >
+                  {n}x
+                </button>
+              ))}
+            </div>
+          )}
           <button
             className={`dl-toolbar__toggle${showUntracked ? " dl-toolbar__toggle--on" : ""}`}
             onClick={() => setShowUntracked((v) => !v)}
@@ -493,6 +545,13 @@ export default function DownloadsPage({
               <ActiveCard
                 key={dl.id}
                 dl={dl}
+                onPause={() => window.electron?.pauseDownload?.(dl.id)}
+                onResume={() =>
+                  window.electron?.resumeDownload?.(
+                    dl.id,
+                    storage.get("downloaderFolder") || "",
+                  )
+                }
                 onDelete={() => handleDelete(dl)}
                 onSelect={
                   dl.tmdbId && dl.mediaType
@@ -581,6 +640,22 @@ export default function DownloadsPage({
                         )
                       : window.electron.openPath(dl.filePath)
                   }
+                  onWatchInApp={(savedSecsVal) =>
+                    setLocalPlayerItem({
+                      dl,
+                      watchedKey,
+                      initialSecs: savedSecsVal || 0,
+                    })
+                  }
+                  onRetry={
+                    dl.status === "error" || dl.status === "interrupted"
+                      ? () =>
+                          window.electron?.resumeDownload?.(
+                            dl.id,
+                            storage.get("downloaderFolder") || "",
+                          )
+                      : null
+                  }
                   onHistory={onHistory}
                   onShowFolder={() =>
                     window.electron?.showInFolder(dl.filePath)
@@ -648,12 +723,61 @@ export default function DownloadsPage({
             </p>
           </div>
         )}
+      {localPlayerItem && (
+        <LocalPlayerModal
+          dl={localPlayerItem.dl}
+          watchedKey={localPlayerItem.watchedKey}
+          initialSecs={localPlayerItem.initialSecs}
+          onSaveSecs={(ct, dur) => {
+            if (localPlayerItem.watchedKey) {
+              storage.set(
+                PROGRESS_TIME_PREFIX + localPlayerItem.watchedKey,
+                ct,
+              );
+            }
+            if (localPlayerItem.dl?.id && dur > 0) {
+              storage.set(DURATION_PREFIX + localPlayerItem.dl.id, dur);
+            }
+          }}
+          onSaveProgress={onSaveProgress}
+          onMarkWatched={onMarkWatched}
+          onOpenExternal={() => {
+            const item = localPlayerItem.dl;
+            const secs = localPlayerItem.watchedKey
+              ? storage.get(PROGRESS_TIME_PREFIX + localPlayerItem.watchedKey) ||
+                0
+              : 0;
+            if (secs > 0 && window.electron?.openPathAtTime) {
+              window.electron.openPathAtTime(
+                item.filePath,
+                secs,
+                item.subtitlePaths,
+              );
+            } else if (item.subtitlePaths?.length > 0) {
+              window.electron.openPathAtTime(
+                item.filePath,
+                0,
+                item.subtitlePaths,
+              );
+            } else {
+              window.electron?.openPath(item.filePath);
+            }
+          }}
+          onClose={() => setLocalPlayerItem(null)}
+        />
+      )}
     </div>
   );
 }
 
 // ── Active download card ───────────────────────────────────────────────────────
-const ActiveCard = memo(function ActiveCard({ dl, onDelete, onSelect }) {
+const ActiveCard = memo(function ActiveCard({
+  dl,
+  onPause,
+  onResume,
+  onDelete,
+  onSelect,
+}) {
   const pct = dl.progress || 0;
   return (
     <div className="dl-card dl-card-active">
@@ -708,7 +832,32 @@ const ActiveCard = memo(function ActiveCard({ dl, onDelete, onSelect }) {
           </div>
         </div>
         <div className="dl-card__right">
-          <div className="dl-card__pct">{pct.toFixed(1)}%</div>
+          <div className="dl-card__pct">
+            {dl.status === "queued"
+              ? "Queued"
+              : dl.status === "paused"
+                ? "Paused"
+                : `${pct.toFixed(1)}%`}
+          </div>
+          {dl.status === "paused" ? (
+            <button
+              className="btn btn-secondary btn--sm"
+              style={{ padding: "3px 9px", fontSize: 11 }}
+              onClick={onResume}
+              title="Resume download"
+            >
+              ▶ Resume
+            </button>
+          ) : (
+            <button
+              className="btn btn-ghost btn--sm"
+              style={{ padding: "3px 9px", fontSize: 11 }}
+              onClick={onPause}
+              title="Pause download"
+            >
+              ⏸ Pause
+            </button>
+          )}
           <button className="icon-btn" onClick={onDelete} title="Remove">
             <TrashIcon />
           </button>
@@ -751,6 +900,8 @@ const LocalFileCard = memo(function LocalFileCard({
   dl,
   fileExists,
   onWatch,
+  onWatchInApp,
+  onRetry,
   onShowFolder,
   onDelete,
   isHighlighted,
@@ -900,9 +1051,7 @@ const LocalFileCard = memo(function LocalFileCard({
     setShowPopover(false);
   }, [storageKey]);
 
-  const handleWatch = useCallback(() => {
-    if (!dl.filePath) return;
-    // Update watch history when playing from downloads
+  const recordWatchHistory = useCallback(() => {
     if (onHistory && dl.tmdbId && dl.mediaType) {
       onHistory({
         id: dl.tmdbId,
@@ -914,12 +1063,31 @@ const LocalFileCard = memo(function LocalFileCard({
         episode: dl.episode != null ? Number(dl.episode) : null,
       });
     }
+  }, [onHistory, dl]);
+
+  const handleWatch = useCallback(() => {
+    if (!dl.filePath) return;
+    recordWatchHistory();
+    if (onWatchInApp) {
+      onWatchInApp(savedSecs || 0);
+      return;
+    }
     if (savedSecs > 0 && window.electron?.openPathAtTime) {
       window.electron.openPathAtTime(dl.filePath, savedSecs, dl.subtitlePaths);
     } else {
       onWatch(dl.subtitlePaths);
     }
-  }, [dl.filePath, savedSecs, onWatch, onHistory, dl]);
+  }, [dl.filePath, savedSecs, onWatch, onWatchInApp, recordWatchHistory, dl.subtitlePaths]);
+
+  const handleWatchExternal = useCallback(() => {
+    if (!dl.filePath) return;
+    recordWatchHistory();
+    if (savedSecs > 0 && window.electron?.openPathAtTime) {
+      window.electron.openPathAtTime(dl.filePath, savedSecs, dl.subtitlePaths);
+    } else {
+      onWatch(dl.subtitlePaths);
+    }
+  }, [dl.filePath, savedSecs, onWatch, recordWatchHistory, dl.subtitlePaths]);
 
   const progressLabel = (() => {
     if (isWatched) return null;
@@ -1301,16 +1469,36 @@ const LocalFileCard = memo(function LocalFileCard({
                 ✓ Mark Watched
               </button>
             ))}
-          {canWatch && (
+          {onRetry && (
             <button
-              className="btn btn-primary dl-btn--sm-primary"
-              onClick={handleWatch}
-              title={
-                savedSecs > 0 ? `Resume at ${secsToHms(savedSecs)}` : "Watch"
-              }
+              className="btn btn-secondary dl-btn--sm"
+              onClick={onRetry}
+              title="Retry / Resume interrupted download"
             >
-              <PlayIcon /> {savedSecs > 0 ? "Resume" : "Watch"}
+              ↻ Retry
             </button>
+          )}
+          {canWatch && (
+            <>
+              <button
+                className="btn btn-primary dl-btn--sm-primary"
+                onClick={handleWatch}
+                title={
+                  savedSecs > 0
+                    ? `Resume in-app at ${secsToHms(savedSecs)}`
+                    : "Watch in built-in player"
+                }
+              >
+                <PlayIcon /> {savedSecs > 0 ? "Resume" : "Watch"}
+              </button>
+              <button
+                className="btn btn-ghost dl-btn--sm-icon"
+                onClick={handleWatchExternal}
+                title="Open in external player (mpv / VLC)"
+              >
+                <ExternalLinkIcon size={13} />
+              </button>
+            </>
           )}
           {dl.filePath && (
             <button

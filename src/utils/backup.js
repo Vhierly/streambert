@@ -12,6 +12,10 @@ export const BACKUP_KEYS = [
   "history",
   "progress",
   "watched",
+  "libraryStatus",
+  "libraryCollections",
+  "anilistSyncEnabled",
+  "traktSyncEnabled",
   // UI / layout preferences
   "homeRowOrder",
   "homeRowVisible",

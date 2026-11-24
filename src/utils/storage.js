@@ -106,6 +106,15 @@ export const STORAGE_KEYS = {
   GAMEPAD_ENABLED: "gamepadEnabled",
   // Explore / Discover page filter state
   EXPLORE_FILTERS: "exploreFilters",
+  // Library 2.0 statuses & custom collections
+  LIBRARY_STATUS: "libraryStatus",
+  LIBRARY_COLLECTIONS: "libraryCollections",
+  // Account sync toggles & secureStorage key names
+  ANILIST_SYNC_ENABLED: "anilistSyncEnabled",
+  TRAKT_SYNC_ENABLED: "traktSyncEnabled",
+  ANILIST_TOKEN: "anilistToken",
+  TRAKT_CLIENT_ID: "traktClientId",
+  TRAKT_TOKEN: "traktToken",
 };
 
 export const getApiKey = () => storage.get(STORAGE_KEYS.API_KEY);
@@ -198,6 +207,7 @@ export async function clearAppCaches() {
   localStorage.removeItem("streambert_anilistCache");
   localStorage.removeItem("streambert_episodeGroupCache");
   localStorage.removeItem("streambert_aniskipCache");
+  localStorage.removeItem("streambert_introdbCache");
   for (const key of Object.keys(localStorage)) {
     if (key.startsWith("dlDur_")) localStorage.removeItem(key);
   }

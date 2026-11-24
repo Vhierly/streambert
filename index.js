@@ -9,8 +9,24 @@ const {
   session,
   webContents,
   Notification,
+  protocol,
 } = require("electron");
 const path = require("path");
+const fs = require("fs");
+const { Readable } = require("stream");
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "streambert-media",
+    privileges: {
+      standard: true,
+      secure: true,
+      stream: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
 
 // -- RAM / performance flags ---------------------------------------------------
 // Low-RAM mode is ON by default. Disable it with STREAMBERT_LOW_RAM=0.
@@ -615,7 +631,7 @@ function createWindow() {
 
 // -- Register all IPC modules --------------------------------------------------
 storageIpc.register();
-downloadsIpc.register(getMainWindow);
+downloadsIpc.register(getMainWindow, playerIpc.getStreamMeta);
 subtitlesIpc.register({
   getDownloads: downloadsIpc.getDownloads,
   saveDownloads: downloadsIpc.saveDownloads,
@@ -814,6 +830,68 @@ if (!gotTheLock) {
 
   app.whenReady().then(() => {
     _bench("app ready");
+
+    // Local media streaming protocol with HTTP 206 Range support for LocalPlayerModal
+    const MEDIA_MIME = {
+      ".mp4": "video/mp4",
+      ".m4v": "video/mp4",
+      ".webm": "video/webm",
+      ".mkv": "video/x-matroska",
+      ".mov": "video/quicktime",
+      ".avi": "video/x-msvideo",
+      ".ts": "video/mp2t",
+      ".vtt": "text/vtt; charset=utf-8",
+      ".srt": "text/plain; charset=utf-8",
+    };
+    protocol.handle("streambert-media", async (request) => {
+      try {
+        const u = new URL(request.url);
+        const rawPath = u.searchParams.get("path");
+        if (!rawPath) return new Response("Bad Request", { status: 400 });
+        const real = fs.realpathSync(rawPath);
+        const ext = path.extname(real).toLowerCase();
+        const mime = MEDIA_MIME[ext];
+        if (!mime) return new Response("Forbidden", { status: 403 });
+
+        const stat = fs.statSync(real);
+        if (!stat.isFile()) return new Response("Not Found", { status: 404 });
+
+        const total = stat.size;
+        const rangeHeader = request.headers.get("range");
+        if (rangeHeader) {
+          const m = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim());
+          if (m) {
+            const start = m[1] ? parseInt(m[1], 10) : 0;
+            const end = m[2] ? Math.min(parseInt(m[2], 10), total - 1) : total - 1;
+            if (start >= 0 && start <= end && end < total) {
+              const stream = fs.createReadStream(real, { start, end });
+              return new Response(Readable.toWeb(stream), {
+                status: 206,
+                headers: {
+                  "Content-Type": mime,
+                  "Content-Length": String(end - start + 1),
+                  "Content-Range": `bytes ${start}-${end}/${total}`,
+                  "Accept-Ranges": "bytes",
+                },
+              });
+            }
+          }
+        }
+
+        const stream = fs.createReadStream(real);
+        return new Response(Readable.toWeb(stream), {
+          status: 200,
+          headers: {
+            "Content-Type": mime,
+            "Content-Length": String(total),
+            "Accept-Ranges": "bytes",
+          },
+        });
+      } catch {
+        return new Response("Not Found", { status: 404 });
+      }
+    });
+
     createWindow();
   });
   app.on("window-all-closed", () => app.quit());

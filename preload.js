@@ -32,11 +32,21 @@ contextBridge.exposeInMainWorld("electron", {
   // Download actions
   checkDownloader: (folder) => ipcRenderer.invoke("check-downloader", folder),
   runDownload: (args) => ipcRenderer.invoke("run-download", args),
+  pauseDownload: (id) => ipcRenderer.invoke("pause-download", { id }),
+  resumeDownload: (id, folderPath) =>
+    ipcRenderer.invoke("resume-download", { id, folderPath }),
+  getDownloadConcurrency: () => ipcRenderer.invoke("get-download-concurrency"),
+  setDownloadConcurrency: (n) =>
+    ipcRenderer.invoke("set-download-concurrency", n),
   getDownloads: () => ipcRenderer.invoke("get-downloads"),
   deleteDownload: (args) => ipcRenderer.invoke("delete-download", args),
   showInFolder: (path) => ipcRenderer.invoke("show-in-folder", path),
   fileExists: (path) => ipcRenderer.invoke("file-exists", path),
   scanDirectory: (path) => ipcRenderer.invoke("scan-directory", path),
+  readSubtitleText: (filePath) =>
+    ipcRenderer.invoke("read-subtitle-text", filePath),
+  pingPlayerSources: (targets) =>
+    ipcRenderer.invoke("ping-player-sources", targets),
 
   // Misc
   pickFolder: () => ipcRenderer.invoke("pick-folder"),
