@@ -1,0 +1,81 @@
+name: Build & Attach Release Binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and attach binaries to (e.g. v2.8.0)"
+        required: true
+        default: "v2.8.0"
+
+permissions:
+  contents: write
+
+jobs:
+  release-binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            cmd: npm run dist:win
+          - os: ubuntu-latest
+            platform: linux
+            cmd: npx cross-env ELECTRON_DIST=1 vite build && npx electron-builder --linux AppImage deb --publish never
+          - os: macos-latest
+            platform: mac
+            cmd: npm run dist:mac
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Resolve target tag
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build installer (${{ matrix.platform }})
+        run: ${{ matrix.cmd }}
+
+      - name: Upload installer assets to GitHub Release
+        shell: bash
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Streambert $TAG" --generate-notes
+          shopt -s nullglob
+          FILES=(dist/*.exe dist/*.AppImage dist/*.deb dist/*.dmg)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No installer files found in dist/"
+            ls -la dist/ || true
+            exit 1
+          fi
+          gh release upload "$TAG" "${FILES[@]}" --clobber

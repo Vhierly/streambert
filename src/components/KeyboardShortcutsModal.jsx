@@ -2,7 +2,9 @@
 export default function KeyboardShortcutsModal({ onClose }) {
   const shortcuts = [
     { keys: ["Ctrl", "F"], desc: "Open search" },
-    { keys: ["Ctrl", "K"], desc: "Search on a page" },
+    { keys: ["↑ / ↓", "Enter"], desc: "Navigate & open search results" },
+    { keys: ["Ctrl", "E"], desc: "Open Explore & Discover" },
+    { keys: ["Ctrl", "K"], desc: "Search on Downloads page" },
     { keys: ["Esc"], desc: "Close search / modal" },
     { keys: ["Ctrl", "Z"], desc: "Navigate back" },
     { keys: ["Ctrl", "R"], desc: "Reload app" },

@@ -17,6 +17,7 @@ export const BACKUP_KEYS = [
   "homeRowVisible",
   "homeViewMode",
   "startPage",
+  "exploreFilters",
   // Player preferences
   "playerSource",
   "hianimeDubMode",

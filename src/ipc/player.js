@@ -20,6 +20,16 @@ let _updateAbortController = null;
 //             (Gitea stores release attachments under /attachments/, not under the repo path)
 const TRUSTED_UPDATE_SOURCES = [
   {
+    id: "github-fork",
+    origin: "https://github.com",
+    pathPrefix: "/Vhierly/streambert/releases/download/",
+    redirectHosts: [
+      "github.com",
+      "objects.githubusercontent.com",
+      "release-assets.githubusercontent.com",
+    ],
+  },
+  {
     id: "github",
     origin: "https://github.com",
     // Must match the full repo path so an attacker can't use

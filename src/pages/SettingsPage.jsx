@@ -1837,6 +1837,7 @@ function StartPageSection() {
           onChange={(v) => setStartPage(v)}
           options={[
             { value: "home", label: "🏠  Home" },
+            { value: "explore", label: "🧭  Explore / Discover" },
             { value: "history", label: "🕐  Library / History" },
             { value: "downloads", label: "⬇  Downloads" },
           ]}

@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks: {
             react: ["react", "react-dom"],
+            explore: ["./src/pages/ExplorePage"],
             settings: ["./src/pages/SettingsPage"],
             movie: ["./src/pages/MoviePage"],
             tv: ["./src/pages/TVPage"],

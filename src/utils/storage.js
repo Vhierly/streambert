@@ -104,6 +104,8 @@ export const STORAGE_KEYS = {
   DISCORD_RPC_SHOW_BUTTON: "discordRpcShowButton",
   // Controller / gamepad navigation
   GAMEPAD_ENABLED: "gamepadEnabled",
+  // Explore / Discover page filter state
+  EXPLORE_FILTERS: "exploreFilters",
 };
 
 export const getApiKey = () => storage.get(STORAGE_KEYS.API_KEY);

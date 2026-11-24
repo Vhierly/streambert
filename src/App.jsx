@@ -36,6 +36,7 @@ import { useGamepadNav } from "./utils/useGamepadNav";
 
 // Lazy-loaded pages: each chunk is only downloaded when the user first visits
 const HomePage = lazy(() => import("./pages/HomePage"));
+const ExplorePage = lazy(() => import("./pages/ExplorePage"));
 const MoviePage = lazy(() => import("./pages/MoviePage"));
 const TVPage = lazy(() => import("./pages/TVPage"));
 const LibraryPage = lazy(() => import("./pages/LibraryPage"));
@@ -695,6 +696,10 @@ export default function App() {
         e.preventDefault();
         setShowSearch(true);
       }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        if (pageRef.current !== "explore") navigate("explore");
+      }
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         if (pageRef.current === "downloads") {
           e.preventDefault();
@@ -1067,6 +1072,19 @@ export default function App() {
                 onMarkUnwatched={markUnwatched}
                 history={history}
                 apiKey={apiKey}
+              />
+            )}
+            {page === "explore" && (
+              <ExplorePage
+                apiKey={apiKey}
+                offline={offline}
+                onSelect={handleSelectResult}
+                progress={progress}
+                watched={watched}
+                onMarkWatched={markWatched}
+                onMarkUnwatched={markUnwatched}
+                savedList={savedList}
+                showToast={showToast}
               />
             )}
             {page === "movie" && selected && (

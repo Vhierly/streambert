@@ -4,6 +4,7 @@ import { useSeasonalEvent } from "../components/seasonalEvents.jsx";
 import {
   StreambertLogo,
   HomeIcon,
+  CompassIcon,
   SearchIcon,
   HistoryIcon,
   FilmIcon,
@@ -122,6 +123,12 @@ export default function Sidebar({
         onClick={() => onNavigate("home")}
         icon={<HomeIcon />}
         label="Home"
+      />
+      <SideBtn
+        active={page === "explore"}
+        onClick={() => onNavigate("explore")}
+        icon={<CompassIcon />}
+        label="Explore & Discover (Ctrl+E)"
       />
       <SideBtn
         active={page === "history"}

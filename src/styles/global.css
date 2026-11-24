@@ -4057,3 +4057,291 @@ html[data-win-titlebar][data-maximized] .main {
 .episode-check-item:hover {
     color: var(--text) !important;
 }
+
+
+/* ── Search Modal Enhancements (Tabs, Keyboard Nav & Person Drill-down) ── */
+.search-result.active,
+.search-history-item.active {
+    background: var(--surface2);
+    box-shadow: inset 2px 0 0 var(--red);
+}
+
+.search-history-item.active .search-history-remove {
+    opacity: 1;
+}
+
+.search-tabs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    overflow-x: auto;
+}
+
+.search-tab {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.search-tab:hover {
+    color: var(--text);
+    border-color: var(--text3);
+}
+
+.search-tab.active {
+    background: var(--red-dim);
+    color: var(--red);
+    border-color: var(--red);
+    font-weight: 600;
+}
+
+.type-person {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+}
+
+.search-person-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+}
+
+.search-person-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.search-person-back svg {
+    width: 15px;
+    height: 15px;
+}
+
+.search-person-back:hover {
+    color: var(--text);
+    border-color: var(--red);
+}
+
+.search-person-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.search-person-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Explore & Discover Page ────────────────────────────────────────────── */
+.explore-page {
+    padding-bottom: 48px;
+}
+
+.explore-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+    padding: 40px 48px 20px;
+}
+
+.explore-title {
+    font-family: var(--font-display);
+    font-size: 48px;
+    letter-spacing: 1px;
+    line-height: 1;
+    color: var(--text);
+    margin-bottom: 6px;
+}
+
+.explore-subtitle {
+    font-size: 13px;
+    color: var(--text3);
+}
+
+.explore-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.explore-action-btn {
+    padding: 9px 16px;
+    font-size: 13px;
+}
+
+.explore-action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.explore-filters {
+    margin: 0 48px 12px;
+    padding: 18px 22px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.explore-modes {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.explore-mode-btn {
+    padding: 7px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text2);
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.18s;
+}
+
+.explore-mode-btn:hover {
+    color: var(--text);
+    border-color: var(--text3);
+}
+
+.explore-mode-btn.active {
+    background: var(--red);
+    border-color: var(--red);
+    color: #fff;
+    box-shadow: var(--red-glow);
+}
+
+.explore-select-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.explore-select-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 150px;
+}
+
+.explore-select-group > span {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text3);
+}
+
+.explore-select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 13px;
+    padding: 8px 12px;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+
+.explore-select:hover,
+.explore-select:focus {
+    border-color: var(--red);
+}
+
+.explore-chip-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.explore-chip-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text3);
+    min-width: 64px;
+    padding-top: 6px;
+    flex-shrink: 0;
+}
+
+.explore-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.explore-chip {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.explore-chip:hover {
+    color: var(--text);
+    border-color: var(--text3);
+}
+
+.explore-chip.active {
+    background: var(--red-dim);
+    border-color: var(--red);
+    color: var(--red);
+    font-weight: 600;
+}
+
+.explore-load-more {
+    display: flex;
+    justify-content: center;
+    padding: 28px 0 8px;
+}
