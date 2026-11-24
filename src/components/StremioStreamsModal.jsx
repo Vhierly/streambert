@@ -121,6 +121,8 @@ export default function StremioStreamsModal({
   // Audio Remux & Timeline state (fixes silent AC3/EAC3/DTS 5.1 torrents!)
   const [useRemux, setUseRemux] = useState(false);
   const [audioTrackIdx, setAudioTrackIdx] = useState(0);
+  const [audioOffsetSec, setAudioOffsetSec] = useState(0);
+  const [appliedAudioOffsetSec, setAppliedAudioOffsetSec] = useState(0);
   const [remuxStartSec, setRemuxStartSec] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [currentTimeSec, setCurrentTimeSec] = useState(0);
@@ -131,6 +133,7 @@ export default function StremioStreamsModal({
   const [isMuted, setIsMuted] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fsControlsVisible, setFsControlsVisible] = useState(true);
 
   // Subtitle engine state (Online SubDL/Wyzie + Embedded MKV + Local .srt/.vtt)
   const [availableSubs, setAvailableSubs] = useState([]); // { id, label, url?, rawText? }
@@ -158,6 +161,10 @@ export default function StremioStreamsModal({
   const autoSwitchedAudioRef = useRef(false);
   const isScrubbingRef = useRef(false);
   const seekDebounceRef = useRef(null);
+  const audioSyncTimerRef = useRef(null);
+  const fsIdleTimerRef = useRef(null);
+  const currentTimeRef = useRef(0);
+  currentTimeRef.current = currentTimeSec;
   const keepFilesRef = useRef(false);
   keepFilesRef.current = keepTorrentFiles;
 
@@ -176,10 +183,54 @@ export default function StremioStreamsModal({
     return () => window.removeEventListener("streambert:addons-changed", onChanged);
   }, []);
 
+  const revealFsControls = () => {
+    setFsControlsVisible(true);
+    if (fsIdleTimerRef.current) {
+      clearTimeout(fsIdleTimerRef.current);
+      fsIdleTimerRef.current = null;
+    }
+    if (document.fullscreenElement) {
+      fsIdleTimerRef.current = setTimeout(() => {
+        if (
+          document.fullscreenElement &&
+          !videoRef.current?.paused &&
+          !isScrubbingRef.current
+        ) {
+          setFsControlsVisible(false);
+        }
+      }, 3000);
+    }
+  };
+
   useEffect(() => {
-    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    const onFs = () => {
+      const fs = !!document.fullscreenElement;
+      setIsFullscreen(fs);
+      setFsControlsVisible(true);
+      if (fsIdleTimerRef.current) {
+        clearTimeout(fsIdleTimerRef.current);
+        fsIdleTimerRef.current = null;
+      }
+      if (fs) {
+        fsIdleTimerRef.current = setTimeout(() => {
+          if (
+            document.fullscreenElement &&
+            !videoRef.current?.paused &&
+            !isScrubbingRef.current
+          ) {
+            setFsControlsVisible(false);
+          }
+        }, 3000);
+      }
+    };
     document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFs);
+      if (fsIdleTimerRef.current) {
+        clearTimeout(fsIdleTimerRef.current);
+        fsIdleTimerRef.current = null;
+      }
+    };
   }, []);
 
   const activeProgressKey =
@@ -231,6 +282,10 @@ export default function StremioStreamsModal({
         clearTimeout(seekDebounceRef.current);
         seekDebounceRef.current = null;
       }
+      if (audioSyncTimerRef.current) {
+        clearTimeout(audioSyncTimerRef.current);
+        audioSyncTimerRef.current = null;
+      }
       if (isElectron && window.electron?.stopTorrentStream) {
         window.electron.stopTorrentStream({ keepFiles: keepFilesRef.current });
       }
@@ -267,6 +322,10 @@ export default function StremioStreamsModal({
       clearTimeout(seekDebounceRef.current);
       seekDebounceRef.current = null;
     }
+    if (audioSyncTimerRef.current) {
+      clearTimeout(audioSyncTimerRef.current);
+      audioSyncTimerRef.current = null;
+    }
     isScrubbingRef.current = false;
     setScrubSec(null);
     setIsBufferingSeek(false);
@@ -288,6 +347,21 @@ export default function StremioStreamsModal({
     setShowSubSearch(false);
     setParsedCues([]);
     setActiveCueText("");
+  };
+
+  const adjustAudioOffset = (nextVal) => {
+    const rounded = Math.max(-15, Math.min(15, Math.round(nextVal * 10) / 10));
+    setAudioOffsetSec(rounded);
+    if (audioSyncTimerRef.current) {
+      clearTimeout(audioSyncTimerRef.current);
+      audioSyncTimerRef.current = null;
+    }
+    audioSyncTimerRef.current = setTimeout(() => {
+      audioSyncTimerRef.current = null;
+      setRemuxStartSec(Math.floor(currentTimeRef.current || 0));
+      setUseRemux(true);
+      setAppliedAudioOffsetSec(rounded);
+    }, 320);
   };
 
   const keyboardActionRef = useRef(null);
@@ -312,6 +386,9 @@ export default function StremioStreamsModal({
       } else if (e.key === " ") {
         e.preventDefault();
         keyboardActionRef.current?.togglePlay();
+      } else if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        toggleFullscreen();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -397,10 +474,13 @@ export default function StremioStreamsModal({
   const effectivePlayUrl = useMemo(() => {
     if (!activeStream) return null;
     if (useRemux && activeStream.remuxBaseUrl) {
-      return `${activeStream.remuxBaseUrl}?start=${Math.floor(remuxStartSec)}&audio=${audioTrackIdx}`;
+      const delayParam = appliedAudioOffsetSec
+        ? `&adelay=${appliedAudioOffsetSec}`
+        : "";
+      return `${activeStream.remuxBaseUrl}?start=${Math.floor(remuxStartSec)}&audio=${audioTrackIdx}${delayParam}`;
     }
     return activeStream.directUrl;
-  }, [activeStream, useRemux, remuxStartSec, audioTrackIdx]);
+  }, [activeStream, useRemux, remuxStartSec, audioTrackIdx, appliedAudioOffsetSec]);
 
   // Load media into <video> / hls.js whenever `effectivePlayUrl` changes
   useEffect(() => {
@@ -500,6 +580,8 @@ export default function StremioStreamsModal({
     setSelectedSubId(initialSubs.length > 0 ? initialSubs[0].id : "off");
     setSubOffsetSec(0);
     setAudioTrackIdx(0);
+    setAudioOffsetSec(0);
+    setAppliedAudioOffsetSec(0);
     setUseRemux(!!streamObj.useRemuxByDefault);
 
     // Resume from savedPct if duration is already known in remux mode
@@ -1143,6 +1225,55 @@ export default function StremioStreamsModal({
                   </button>
                 )}
 
+                {activeStream.remuxBaseUrl && (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      background: "var(--surface)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 99,
+                      padding: "1px 6px",
+                    }}
+                    title="Adjust audio timing: +0.2s delays early audio ('kecepetan'), -0.2s pulls lagging audio earlier"
+                  >
+                    <span style={{ fontSize: 11, color: "var(--text3)", paddingLeft: 2 }}>
+                      Audio Sync:
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ height: 20, padding: "0 5px", fontSize: 11 }}
+                      onClick={() => adjustAudioOffset(audioOffsetSec - 0.2)}
+                    >
+                      -0.2s
+                    </button>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: audioOffsetSec !== 0 ? "#48c774" : "var(--text)",
+                        minWidth: 34,
+                        textAlign: "center",
+                        fontWeight: audioOffsetSec !== 0 ? 600 : 400,
+                        cursor: audioOffsetSec !== 0 ? "pointer" : "default",
+                      }}
+                      onClick={() => audioOffsetSec !== 0 && adjustAudioOffset(0)}
+                      title="Click to reset audio sync to 0s"
+                    >
+                      {audioOffsetSec > 0 ? `+${audioOffsetSec}s` : `${audioOffsetSec}s`}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ height: 20, padding: "0 5px", fontSize: 11 }}
+                      onClick={() => adjustAudioOffset(audioOffsetSec + 0.2)}
+                    >
+                      +0.2s
+                    </button>
+                  </div>
+                )}
+
                 {effectiveAudioTracks.length > 1 && (
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ color: "var(--text3)" }}>Audio:</span>
@@ -1199,17 +1330,35 @@ export default function StremioStreamsModal({
             {/* Video Stage + Custom Subtitle Overlay + Custom Scrubber */}
             <div
               ref={playerStageRef}
+              onMouseMove={revealFsControls}
+              onPointerDown={revealFsControls}
               style={{
                 background: "#000",
                 borderRadius: isFullscreen ? 0 : 10,
                 overflow: "hidden",
                 position: "relative",
+                width: "100%",
+                height: isFullscreen ? "100vh" : "auto",
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "center",
+                cursor:
+                  isFullscreen && !fsControlsVisible && !isPaused ? "none" : "default",
               }}
             >
-              <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 9" }}>
+              <div
+                style={
+                  isFullscreen
+                    ? {
+                        position: "relative",
+                        width: "100%",
+                        height: "100%",
+                        flex: 1,
+                        minHeight: 0,
+                      }
+                    : { position: "relative", width: "100%", aspectRatio: "16 / 9" }
+                }
+              >
                 <video
                   ref={videoRef}
                   playsInline
@@ -1219,11 +1368,15 @@ export default function StremioStreamsModal({
                     if (v.paused) v.play().catch(() => {});
                     else v.pause();
                   }}
+                  onDoubleClick={toggleFullscreen}
                   onPlay={() => setIsPaused(false)}
                   onPlaying={() => setIsBufferingSeek(false)}
                   onCanPlay={() => setIsBufferingSeek(false)}
                   onWaiting={() => setIsBufferingSeek(true)}
-                  onPause={() => setIsPaused(true)}
+                  onPause={() => {
+                    setIsPaused(true);
+                    setFsControlsVisible(true);
+                  }}
                   onTimeUpdate={handleTimeUpdate}
                   onError={() =>
                     setPlayerError(
@@ -1233,8 +1386,12 @@ export default function StremioStreamsModal({
                   style={{
                     width: "100%",
                     height: "100%",
+                    objectFit: "contain",
                     background: "#000",
-                    cursor: "pointer",
+                    cursor:
+                      isFullscreen && !fsControlsVisible && !isPaused
+                        ? "none"
+                        : "pointer",
                   }}
                 />
 
@@ -1265,7 +1422,12 @@ export default function StremioStreamsModal({
                       position: "absolute",
                       left: "6%",
                       right: "6%",
-                      bottom: isFullscreen ? 64 : 18,
+                      bottom: isFullscreen
+                        ? fsControlsVisible || isPaused
+                          ? 86
+                          : 28
+                        : 18,
+                      transition: "bottom 0.2s ease",
                       textAlign: "center",
                       pointerEvents: "none",
                       zIndex: 10,
@@ -1291,16 +1453,36 @@ export default function StremioStreamsModal({
                 )}
               </div>
 
-              {/* Unified Player Control Bar (supports instant FFmpeg Remux Seeking!) */}
+              {/* Unified Player Control Bar (floats inside Fullscreen so Exit button is always reachable!) */}
               <div
-                style={{
-                  background: "rgba(14, 14, 18, 0.96)",
-                  borderTop: "1px solid rgba(255,255,255,0.08)",
-                  padding: "8px 14px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 6,
-                }}
+                style={
+                  isFullscreen
+                    ? {
+                        position: "absolute",
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        zIndex: 20,
+                        background:
+                          "linear-gradient(to top, rgba(8, 8, 12, 0.96), rgba(14, 14, 18, 0.86))",
+                        borderTop: "1px solid rgba(255,255,255,0.1)",
+                        padding: "10px 18px 12px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                        opacity: fsControlsVisible || isPaused ? 1 : 0,
+                        pointerEvents: fsControlsVisible || isPaused ? "auto" : "none",
+                        transition: "opacity 0.22s ease",
+                      }
+                    : {
+                        background: "rgba(14, 14, 18, 0.96)",
+                        borderTop: "1px solid rgba(255,255,255,0.08)",
+                        padding: "8px 14px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                      }
+                }
               >
                 {/* Seek Slider */}
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1474,11 +1656,15 @@ export default function StremioStreamsModal({
                     <button
                       type="button"
                       className="btn btn-ghost"
-                      style={{ height: 28, padding: "0 10px", fontSize: 13 }}
+                      style={{ height: 28, padding: "0 10px", fontSize: 12.5 }}
                       onClick={toggleFullscreen}
-                      title="Fullscreen"
+                      title={
+                        isFullscreen
+                          ? "Exit Fullscreen (F / Esc / Double-click)"
+                          : "Fullscreen (F / Double-click)"
+                      }
                     >
-                      ⛶
+                      {isFullscreen ? "🗗 Exit" : "⛶"}
                     </button>
                   </div>
                 </div>

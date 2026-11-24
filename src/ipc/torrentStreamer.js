@@ -320,6 +320,21 @@ function cleanStaleTempDirs() {
   } catch {}
 }
 
+function buildRemuxAudioFilter(startSec = 0, audioOffsetSec = 0) {
+  const filters = [
+    Number(startSec) > 0 ? "aresample=async=1" : "aresample=async=1:first_pts=0",
+  ];
+  const off = Number(audioOffsetSec) || 0;
+  if (off > 0.01) {
+    const ms = Math.min(15000, Math.round(off * 1000));
+    filters.push(`adelay=${ms}:all=1`);
+  } else if (off < -0.01) {
+    const trimSec = Math.min(15, Math.abs(off)).toFixed(3);
+    filters.push(`atrim=start=${trimSec}`, "asetpts=PTS-STARTPTS");
+  }
+  return filters.join(",");
+}
+
 function killActiveRemuxProcess(session) {
   if (session?.remuxProc) {
     try {
@@ -700,6 +715,10 @@ function startTorrentSession({
 
           const startSec = Math.max(0, Number(reqUrl.searchParams.get("start") || 0));
           const audioIdx = Math.max(0, Number(reqUrl.searchParams.get("audio") || 0));
+          const audioOffsetSec = Math.max(
+            -15,
+            Math.min(15, Number(reqUrl.searchParams.get("adelay") || 0) || 0),
+          );
           const vCodec = sessionState.probe?.videoCodec || "h264";
           const knownDur =
             sessionState.probe?.durationSec || sessionState.hintDurationSec || 0;
@@ -717,7 +736,8 @@ function startTorrentSession({
 
           const args = ["-hide_banner", "-loglevel", "error"];
           if (startSec > 0) {
-            args.push("-ss", String(startSec));
+            // Keep decoded audio aligned to the exact video keyframe selected by -c:v copy
+            args.push("-noaccurate_seek", "-ss", String(startSec));
           }
           args.push(
             "-seekable",
@@ -747,6 +767,10 @@ function startTorrentSession({
             "2",
             "-b:a",
             "192k",
+            "-af",
+            buildRemuxAudioFilter(startSec, audioOffsetSec),
+            "-avoid_negative_ts",
+            "make_zero",
             "-movflags",
             "frag_keyframe+empty_moov+default_base_moof",
             "-f",
@@ -1002,5 +1026,6 @@ module.exports = {
   selectTargetVideoFile,
   parseFfmpegProbeOutput,
   mergeMagnetTrackers,
+  buildRemuxAudioFilter,
   resolveFfmpegPath,
 };

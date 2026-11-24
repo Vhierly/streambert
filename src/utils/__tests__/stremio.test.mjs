@@ -199,7 +199,10 @@ test("extractStreamSeeds and parseFfmpegProbeOutput handle addon seed badges and
   assert.equal(extractStreamSeeds({ description: "🌱 92 · 1080p" }), 92);
   assert.equal(extractStreamSeeds({ seeds: 510 }), 510);
 
-  const { parseFfmpegProbeOutput } = require("../../ipc/torrentStreamer.js");
+  const {
+    parseFfmpegProbeOutput,
+    buildRemuxAudioFilter,
+  } = require("../../ipc/torrentStreamer.js");
   const mkvProbe = parseFfmpegProbeOutput(`
 Input #0, matroska,webm, from 'http://127.0.0.1:55000/video/ep01.mkv':
   Duration: N/A, start: 0.000000, bitrate: N/A
@@ -212,4 +215,15 @@ Input #0, matroska,webm, from 'http://127.0.0.1:55000/video/ep01.mkv':
   assert.equal(mkvProbe.videoCodec, "hevc");
   assert.equal(mkvProbe.audioTracks.length, 1);
   assert.equal(mkvProbe.audioTracks[0].needsRemux, true);
+
+  assert.equal(buildRemuxAudioFilter(0, 0), "aresample=async=1:first_pts=0");
+  assert.equal(buildRemuxAudioFilter(120, 0), "aresample=async=1");
+  assert.equal(
+    buildRemuxAudioFilter(120, 0.4),
+    "aresample=async=1,adelay=400:all=1",
+  );
+  assert.equal(
+    buildRemuxAudioFilter(120, -0.4),
+    "aresample=async=1,atrim=start=0.400,asetpts=PTS-STARTPTS",
+  );
 });
