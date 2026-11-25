@@ -204,6 +204,9 @@ test("extractStreamSeeds and parseFfmpegProbeOutput handle addon seed badges and
   const {
     parseFfmpegProbeOutput,
     buildRemuxAudioFilter,
+    parseCompactPeers,
+    loadTurboTorrentStream,
+    mergeMagnetTrackers,
   } = require("../../ipc/torrentStreamer.js");
   const mkvProbe = parseFfmpegProbeOutput(`
 Input #0, matroska,webm, from 'http://127.0.0.1:55000/video/ep01.mkv':
@@ -269,4 +272,11 @@ Input #0, matroska,webm, from 'http://127.0.0.1:55000/video/ep01.mkv':
     },
   );
   assert.equal(chosen.id, "b");
+
+  // Verify BEP-11 ut_pex compact peer parser & turbo torrent-stream loader
+  const pexBuf = Buffer.from([185, 21, 216, 40, 0x1a, 0xe1, 127, 0, 0, 1, 0x1a, 0xe1]);
+  assert.deepEqual(parseCompactPeers(pexBuf), ["185.21.216.40:6881"]);
+  assert.equal(typeof loadTurboTorrentStream(), "function");
+  const trList = mergeMagnetTrackers("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567");
+  assert.ok(trList.some((t) => t.startsWith("https://")));
 });

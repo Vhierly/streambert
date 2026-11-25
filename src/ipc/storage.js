@@ -493,17 +493,35 @@ function register() {
         return { ok: false, error: "Unsupported protocol" };
       }
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 12000);
+      const timer = setTimeout(() => ctrl.abort(), 14000);
       try {
         const res = await net.fetch(u.toString(), {
           headers: {
-            Accept: "application/json",
-            "User-Agent": "Streambert/2.9",
+            Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Stremio/4.4 Streambert/3.0",
           },
           signal: ctrl.signal,
         });
         if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-        const data = await res.json();
+        const text = await res.text();
+        const trimmed = text.trimStart();
+        if (trimmed.startsWith("<")) {
+          const titleMatch = /<title[^>]*>([^<]+)<\/title>/i.exec(trimmed);
+          const pageTitle = titleMatch ? titleMatch[1].trim() : "";
+          if (/deprecated|retired/i.test(pageTitle) || /deprecated|retired/i.test(res.url || "")) {
+            return {
+              ok: false,
+              error: `Addon host has been retired upstream (${pageTitle || "deprecated"})`,
+            };
+          }
+          return {
+            ok: false,
+            error:
+              "Server returned an HTML page instead of JSON (enable Encrypted DNS / DoH above if blocked by ISP, or click Configure ↗ first)",
+          };
+        }
+        const data = JSON.parse(trimmed);
         return { ok: true, data };
       } finally {
         clearTimeout(timer);

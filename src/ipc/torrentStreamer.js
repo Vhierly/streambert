@@ -11,6 +11,12 @@ const os = require("os");
 const { spawn, spawnSync } = require("child_process");
 
 const DEFAULT_TRACKERS = [
+  "https://tracker.tamersunion.org:443/announce",
+  "https://tracker.gbitt.info:443/announce",
+  "https://tracker.renfei.net:443/announce",
+  "https://tracker.lilithraws.org:443/announce",
+  "https://tr.burnabyhighstar.com:443/announce",
+  "https://tracker.bt4g.com:2095/announce",
   "udp://tracker.opentrackr.org:1337/announce",
   "udp://open.stealth.si:80/announce",
   "udp://tracker.torrent.eu.org:451/announce",
@@ -33,6 +39,91 @@ const DEFAULT_TRACKERS = [
   "wss://tracker.openwebtorrent.com",
   "wss://tracker.btorrent.xyz",
 ];
+
+let cachedTorrentStreamFactory = null;
+
+/**
+ * Load `torrent-stream` with upgraded 64-block per-peer pipeline (1 MB BDP window
+ * instead of 1990s-era 5 blocks = 80 KB) and faster slow-peer hotswapping.
+ */
+function loadTurboTorrentStream() {
+  if (cachedTorrentStreamFactory) return cachedTorrentStreamFactory;
+  try {
+    const Module = require("module");
+    const resolved = require.resolve("torrent-stream");
+    const src = fs.readFileSync(resolved, "utf8");
+    const patched = src
+      .replace(/var\s+MAX_REQUESTS\s*=\s*5\b/, "var MAX_REQUESTS = 64")
+      .replace(
+        /var\s+SPEED_THRESHOLD\s*=\s*3\s*\*\s*piece\.BLOCK_LENGTH/,
+        "var SPEED_THRESHOLD = 16 * piece.BLOCK_LENGTH",
+      )
+      .replace(/var\s+CHOKE_TIMEOUT\s*=\s*5000\b/, "var CHOKE_TIMEOUT = 3500");
+    const customMod = new Module(resolved, module);
+    customMod.filename = resolved;
+    customMod.paths = Module._nodeModulePaths(path.dirname(resolved));
+    customMod._compile(patched, resolved);
+    if (typeof customMod.exports === "function") {
+      cachedTorrentStreamFactory = customMod.exports;
+      return cachedTorrentStreamFactory;
+    }
+  } catch {}
+  cachedTorrentStreamFactory = require("torrent-stream");
+  return cachedTorrentStreamFactory;
+}
+
+/**
+ * Parse BEP-11 `ut_pex` compact IPv4 peer buffer (6 bytes per peer: 4-byte IP + 2-byte port BE).
+ */
+function parseCompactPeers(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 6) return [];
+  const out = [];
+  for (let i = 0; i + 6 <= buf.length; i += 6) {
+    const ip = `${buf[i]}.${buf[i + 1]}.${buf[i + 2]}.${buf[i + 3]}`;
+    const port = buf.readUInt16BE(i + 4);
+    if (port > 0 && ip !== "0.0.0.0" && !ip.startsWith("127.")) {
+      out.push(`${ip}:${port}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Attach BEP-11 `ut_pex` Peer Exchange over TCP so connected peers share 50–100+ extra
+ * swarm peers even when an ISP throttles UDP trackers.
+ */
+function attachUtPex(engine, wire, seenPeers) {
+  if (!wire || !wire.peerExtensions?.extended) return;
+  let bncode;
+  try {
+    bncode = require("bncode");
+  } catch {
+    return;
+  }
+
+  const UT_PEX_ID = 2;
+  try {
+    const hs = { m: { ut_metadata: 1, ut_pex: UT_PEX_ID } };
+    if (engine.metadata?.length) {
+      hs.metadata_size = engine.metadata.length;
+    }
+    wire.extended(0, hs);
+  } catch {}
+
+  wire.on("extended", (extId, payload) => {
+    if (extId !== UT_PEX_ID || !Buffer.isBuffer(payload)) return;
+    try {
+      const msg = bncode.decode(payload);
+      const peers = parseCompactPeers(msg?.added);
+      for (const addr of peers) {
+        if (seenPeers.size >= 240) break;
+        if (seenPeers.has(addr)) continue;
+        seenPeers.add(addr);
+        engine.connect(addr);
+      }
+    } catch {}
+  });
+}
 
 function mergeMagnetTrackers(magnetUri) {
   const set = new Set(DEFAULT_TRACKERS);
@@ -344,14 +435,34 @@ function killActiveRemuxProcess(session) {
   }
 }
 
-function waitForOpeningPieces(engine, headPiece, tailPiece, maxWaitMs = 3500) {
+function waitForOpeningPieces(
+  engine,
+  headPiece,
+  tailPiece,
+  pieceLength = 262144,
+  maxWaitMs = 5200,
+) {
   return new Promise((resolve) => {
-    const hasBoth = () =>
-      Boolean(engine?.bitfield?.get(headPiece) && engine?.bitfield?.get(tailPiece));
-    if (hasBoth()) {
+    // Build a 6 MB startup runway (at least 2–4 consecutive opening pieces) to prevent t=2s buffering
+    const cushionCount = Math.max(
+      2,
+      Math.min(6, Math.ceil((6 * 1024 * 1024) / Math.max(16384, pieceLength))),
+    );
+    const cushionEnd = Math.min(tailPiece, headPiece + cushionCount - 1);
+
+    const hasRunway = () => {
+      if (!engine?.bitfield?.get(tailPiece)) return false;
+      for (let p = headPiece; p <= cushionEnd; p++) {
+        if (!engine.bitfield.get(p)) return false;
+      }
+      return true;
+    };
+
+    if (hasRunway()) {
       resolve();
       return;
     }
+
     let done = false;
     const startedAt = Date.now();
     const finishWait = () => {
@@ -364,11 +475,12 @@ function waitForOpeningPieces(engine, headPiece, tailPiece, maxWaitMs = 3500) {
       resolve();
     };
     const onDl = () => {
-      if (hasBoth()) {
+      if (hasRunway()) {
         finishWait();
       } else if (
         engine?.bitfield?.get(headPiece) &&
-        Date.now() - startedAt >= 1600
+        engine?.bitfield?.get(Math.min(tailPiece, headPiece + 1)) &&
+        Date.now() - startedAt >= 2800
       ) {
         finishWait();
       }
@@ -385,7 +497,7 @@ function prioritizeByteWindow(session, bytePos, force = false) {
   if (
     !force &&
     session.lastWindowByte >= 0 &&
-    Math.abs(clamped - session.lastWindowByte) < 2 * 1024 * 1024
+    Math.abs(clamped - session.lastWindowByte) < 1536 * 1024
   ) {
     return;
   }
@@ -396,14 +508,36 @@ function prioritizeByteWindow(session, bytePos, force = false) {
     session.fileStartPiece,
     Math.min(session.fileEndPiece, Math.floor(absByte / session.pieceLength)),
   );
-  // Aggressively prebuffer 64 MB ahead of the current playback/seek point
-  const windowPieces = Math.max(
-    8,
-    Math.ceil((64 * 1024 * 1024) / session.pieceLength),
+
+  // Two-tier anti-buffering focus:
+  // Tier 1 (Priority 7 + critical): Urgent next 10 MB right in front of playhead — 100% of peers finish this FIRST
+  // Tier 2 (Priority 3): Next 32 MB read-ahead runway (keeps memory lean under 256 MB while sustaining high speed)
+  const urgentPieces = Math.max(
+    3,
+    Math.ceil((10 * 1024 * 1024) / session.pieceLength),
   );
-  const endPiece = Math.min(session.fileEndPiece, startPiece + windowPieces - 1);
+  const urgentEnd = Math.min(session.fileEndPiece, startPiece + urgentPieces - 1);
+
+  const aheadPieces = Math.max(
+    6,
+    Math.ceil((32 * 1024 * 1024) / session.pieceLength),
+  );
+  const aheadStart = Math.min(session.fileEndPiece, urgentEnd + 1);
+  const aheadEnd = Math.min(
+    session.fileEndPiece,
+    urgentEnd + aheadPieces,
+  );
 
   try {
+    if (session.urgentSel) {
+      session.engine.deselect(
+        session.urgentSel.from,
+        session.urgentSel.to,
+        7,
+        session.urgentSel.notify,
+      );
+      session.urgentSel = null;
+    }
     if (session.readAheadSel) {
       session.engine.deselect(
         session.readAheadSel.from,
@@ -413,13 +547,17 @@ function prioritizeByteWindow(session, bytePos, force = false) {
       );
       session.readAheadSel = null;
     }
-    const notify = () => {};
-    session.engine.select(startPiece, endPiece, 3, notify);
-    session.readAheadSel = { from: startPiece, to: endPiece, notify };
-    session.engine.critical(
-      startPiece,
-      Math.min(12, endPiece - startPiece + 1),
-    );
+
+    const urgentNotify = () => {};
+    session.engine.select(startPiece, urgentEnd, 7, urgentNotify);
+    session.urgentSel = { from: startPiece, to: urgentEnd, notify: urgentNotify };
+    session.engine.critical(startPiece, urgentEnd - startPiece + 1);
+
+    if (aheadEnd >= aheadStart) {
+      const aheadNotify = () => {};
+      session.engine.select(aheadStart, aheadEnd, 3, aheadNotify);
+      session.readAheadSel = { from: aheadStart, to: aheadEnd, notify: aheadNotify };
+    }
   } catch {}
 }
 
@@ -473,7 +611,7 @@ function startTorrentSession({
 
     let torrentStream;
     try {
-      torrentStream = require("torrent-stream");
+      torrentStream = loadTurboTorrentStream();
     } catch {
       resolve({ ok: false, error: "Torrent engine module not installed" });
       return;
@@ -495,6 +633,7 @@ function startTorrentSession({
       resolve(payload);
     };
 
+    const seenPexPeers = new Set();
     let engine;
     try {
       engine = torrentStream(magnet, {
@@ -504,9 +643,10 @@ function startTorrentSession({
         dht: true,
         tracker: true,
         connections: 120,
-        uploads: 10,
+        uploads: 8,
         verify: false,
       });
+      engine.on("wire", (wire) => attachUtPex(engine, wire, seenPexPeers));
       // Open incoming TCP/swarm port & disable pulse throttling for high-bandwidth connections
       try {
         engine.listen(0);
@@ -606,6 +746,7 @@ function startTorrentSession({
         pieceLength,
         fileStartPiece,
         fileEndPiece,
+        urgentSel: null,
         readAheadSel: null,
         lastWindowByte: -1,
         stopped: false,
@@ -909,8 +1050,14 @@ function startTorrentSession({
         sessionState.remuxBaseUrl = remuxBaseUrl;
         activeSession = sessionState;
 
-        // Wait briefly for prioritized header/tail pieces so FFmpeg immediately sees container duration & codecs
-        await waitForOpeningPieces(engine, fileStartPiece, fileEndPiece, 3500);
+        // Build a 6 MB startup runway + tail index so playback begins smoothly without immediate t=2s buffering
+        await waitForOpeningPieces(
+          engine,
+          fileStartPiece,
+          fileEndPiece,
+          pieceLength,
+          5200,
+        );
 
         const probe = await probeMediaViaFfmpeg(streamUrl, ffmpegBin);
         sessionState.probe = probe;
@@ -1027,5 +1174,7 @@ module.exports = {
   parseFfmpegProbeOutput,
   mergeMagnetTrackers,
   buildRemuxAudioFilter,
+  parseCompactPeers,
+  loadTurboTorrentStream,
   resolveFfmpegPath,
 };

@@ -253,38 +253,44 @@ export function normalizeAddonStreams(rawStreams = [], addonName = "Addon", fall
     .filter(Boolean);
 }
 
-// ── Curated 1-Click Community Stream Addons ─────────────────────────────────
+// ── Curated 1-Click Community Stream Addons (Verified Live Endpoints) ───────
+
+const RETIRED_ADDON_HOSTS = new Set([
+  "webstreamr.hayd.uk",
+  "nuviostreams.hayd.uk",
+  "thepiratebay-plus.strem.fun",
+]);
 
 export const FEATURED_COMMUNITY_ADDONS = [
   {
     id: "com.stremio.torrentio.addon",
     name: "Torrentio",
     badge: "Most Popular",
-    kind: "P2P + Debrid",
+    kind: "4K / Blu-Ray / Anime",
     manifestUrl: "https://torrentio.strem.fun/manifest.json",
     configureUrl: "https://torrentio.strem.fun/configure",
     description:
       "Largest 4K REMUX / 1080p Blu-Ray / Anime multi-tracker index (YTS, EZTV, 1337x, RARBG, Nyaa).",
   },
   {
-    id: "com.hayduk.webstreamr",
-    name: "WebStreamr",
-    badge: "Direct HTTP",
-    kind: "No P2P Needed",
-    manifestUrl: "https://webstreamr.hayd.uk/manifest.json",
-    configureUrl: "https://webstreamr.hayd.uk/configure",
+    id: "com.torrentsdb.addon",
+    name: "TorrentsDB",
+    badge: "Zero Config",
+    kind: "Instant Multi-Tracker",
+    manifestUrl: "https://torrentsdb.com/manifest.json",
+    configureUrl: "https://torrentsdb.com/configure",
     description:
-      "Direct HTTP/HLS multi-hoster streams for Movies & TV Series without BitTorrent.",
+      "Fast zero-config torrent stream index with 4K, 1080p Blu-Ray, Series, and Anime releases.",
   },
   {
-    id: "com.nuvio.streams",
-    name: "Nuvio Streams",
+    id: "org.webstreamrmbg",
+    name: "WebStreamr (MBG Fork)",
     badge: "Direct HTTP",
-    kind: "Fast Direct",
-    manifestUrl: "https://nuviostreams.hayd.uk/manifest.json",
-    configureUrl: "https://nuviostreams.hayd.uk/",
+    kind: "No P2P Needed",
+    manifestUrl: "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/manifest.json",
+    configureUrl: "https://87d6a6ef6b58-webstreamrmbg.baby-beamup.club/configure",
     description:
-      "High-bitrate direct HTTP streams with multi-audio and 4K/1080p links.",
+      "Community-maintained fork of WebStreamr providing direct HTTP/HLS streams without BitTorrent.",
   },
   {
     id: "com.elfhosted.mediafusion",
@@ -294,27 +300,27 @@ export const FEATURED_COMMUNITY_ADDONS = [
     manifestUrl: "https://mediafusion.elfhosted.com/manifest.json",
     configureUrl: "https://mediafusion.elfhosted.com/configure",
     description:
-      "Universal stream provider for global Movies, Series, Anime, and live events.",
+      "Universal stream provider for global Movies, Series, Anime, and live events (use Configure ↗ for custom providers).",
   },
   {
-    id: "com.elfhosted.comet",
+    id: "comet.elfhosted.com",
     name: "Comet (ElfHosted)",
-    badge: "Fast Search",
-    kind: "P2P + Debrid",
+    badge: "Debrid + P2P",
+    kind: "Fast Aggregator",
     manifestUrl: "https://comet.elfhosted.com/manifest.json",
     configureUrl: "https://comet.elfhosted.com/configure",
     description:
-      "Ultra-fast torrent and debrid stream aggregator hosted by ElfHosted.",
+      "High-speed stream & Debrid aggregator hosted by ElfHosted (click Configure ↗ to attach Real-Debrid/TorBox).",
   },
   {
-    id: "com.stremio.tpbplus",
-    name: "ThePirateBay+",
-    badge: "Classic",
-    kind: "P2P Archive",
-    manifestUrl: "https://thepiratebay-plus.strem.fun/manifest.json",
-    configureUrl: null,
+    id: "jackettio.elfhosted.com",
+    name: "Jackettio (ElfHosted)",
+    badge: "Indexer",
+    kind: "Public + Debrid",
+    manifestUrl: "https://jackettio.elfhosted.com/manifest.json",
+    configureUrl: "https://jackettio.elfhosted.com/configure",
     description:
-      "Broad torrent catalog for classic, indie, and hard-to-find Movies & Shows.",
+      "Jackett-powered multi-indexer stream resolver hosted by ElfHosted.",
   },
 ];
 
@@ -322,7 +328,15 @@ export const FEATURED_COMMUNITY_ADDONS = [
 
 export function loadInstalledAddons() {
   const list = storage.get(STORAGE_KEYS.STREMIO_ADDONS);
-  return Array.isArray(list) ? list : [];
+  if (!Array.isArray(list)) return [];
+  return list.filter((a) => {
+    try {
+      const host = new URL(a.manifestUrl || a.baseUrl || "").hostname.toLowerCase();
+      return !RETIRED_ADDON_HOSTS.has(host);
+    } catch {
+      return true;
+    }
+  });
 }
 
 export function saveInstalledAddons(list) {
