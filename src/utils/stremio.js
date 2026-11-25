@@ -127,6 +127,77 @@ export function extractStreamSeeds(stream) {
 }
 
 /**
+ * Extract release group tag (e.g. "subsplease", "erai-raws", "flux", "ntb") from stream text.
+ */
+export function extractReleaseGroupTag(stream) {
+  const hay = `${stream?.details || ""} ${stream?.title || ""} ${stream?.sourceLabel || ""}`;
+  const bracket = /\[([a-zA-Z0-9._-]{3,24})\]/.exec(hay);
+  if (
+    bracket &&
+    !/^(1080p|720p|2160p|480p|4k|uhd|web|bd|bluray|hevc|x264|x265|h264|h265|aac|eac3|ac3|hdr|10bit)$/i.test(
+      bracket[1],
+    )
+  ) {
+    return bracket[1].toLowerCase();
+  }
+  const scene = /-([a-zA-Z0-9]{3,16})(?:\.[a-z0-9]{2,4})?(?:\s|$|\)|\[|·)/i.exec(
+    hay,
+  );
+  if (scene) return scene[1].toLowerCase();
+  return "";
+}
+
+/**
+ * Pick the best matching stream for the next episode during Binge-Watch auto-advance.
+ */
+export function pickBestNextEpisodeStream(candidates = [], previousStream = null) {
+  const playable = (Array.isArray(candidates) ? candidates : []).filter(
+    (c) => c && (c.isDirect || c.magnetUrl),
+  );
+  if (playable.length === 0) return null;
+  if (!previousStream) return playable[0];
+
+  const prevGroup = extractReleaseGroupTag(previousStream);
+  const qRank = { "4K": 5, "1080p": 4, "720p": 3, Auto: 2, "480p": 1, CAM: 0 };
+
+  let best = playable[0];
+  let bestScore = -Infinity;
+
+  for (const cand of playable) {
+    let score = 0;
+    if (previousStream.infoHash && cand.infoHash === previousStream.infoHash) {
+      score += 130;
+    }
+    if (Boolean(cand.isDirect) === Boolean(previousStream.isDirect)) {
+      score += 45;
+    }
+    if (cand.addonName && cand.addonName === previousStream.addonName) {
+      score += 28;
+    }
+    const candGroup = extractReleaseGroupTag(cand);
+    if (prevGroup && candGroup && prevGroup === candGroup) {
+      score += 65;
+    }
+    if (cand.quality && cand.quality === previousStream.quality) {
+      score += 32;
+    } else {
+      score += (qRank[cand.quality] ?? 1) * 3;
+    }
+    const seeds = Number(cand.seeds || 0);
+    score += Math.min(25, seeds / 4);
+    if (!cand.isDirect && seeds === 0 && !previousStream.infoHash) {
+      score -= 35;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = cand;
+    }
+  }
+
+  return best;
+}
+
+/**
  * Normalize raw streams returned by an addon into UI-ready items.
  */
 export function normalizeAddonStreams(rawStreams = [], addonName = "Addon", fallbackTitle = "") {

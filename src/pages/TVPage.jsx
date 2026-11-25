@@ -2822,6 +2822,12 @@ export default function TVPage({
           season={selectedSeason}
           episode={selectedEp?.episode_number || 1}
           episodes={currentSeasonEpisodes || []}
+          onEpisodeSync={(nextEpNum) => {
+            const match = (currentSeasonEpisodes || []).find(
+              (ep) => Number(ep.episode_number) === Number(nextEpNum),
+            );
+            if (match) setSelectedEp(match);
+          }}
           fallbackDurationSec={
             (selectedEp?.runtime || d?.episode_run_time?.[0] || 0) * 60
           }

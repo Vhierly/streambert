@@ -5,6 +5,7 @@ import {
   FEATURED_COMMUNITY_ADDONS,
   installAddonFromUrl,
   loadInstalledAddons,
+  pickBestNextEpisodeStream,
   queryEnabledAddons,
 } from "../utils/stremio";
 import { searchBuiltInTorrents, formatByteSize } from "../utils/torrentSearch";
@@ -85,6 +86,7 @@ export default function StremioStreamsModal({
   season = 1,
   episode = 1,
   episodes = [],
+  onEpisodeSync,
   fallbackDurationSec = 0,
   maxEpisodes = null,
   progressKey,
@@ -153,6 +155,16 @@ export default function StremioStreamsModal({
   // Optional custom magnet bar
   const [showCustomMagnet, setShowCustomMagnet] = useState(false);
   const [customMagnet, setCustomMagnet] = useState("");
+
+  // Binge-Watch Auto-Next Episode state (TV / Anime)
+  const [autoNextEp, setAutoNextEp] = useState(
+    () => storage.get("torrentAutoNext") !== false,
+  );
+  const [nextEpCandidate, setNextEpCandidate] = useState(null);
+  const [dismissedNextEp, setDismissedNextEp] = useState(false);
+  const [transitioningEpLabel, setTransitioningEpLabel] = useState(null);
+  const prefetchedKeyRef = useRef("");
+  const autoTriggeredKeyRef = useRef("");
 
   const playerStageRef = useRef(null);
   const videoRef = useRef(null);
@@ -275,6 +287,25 @@ export default function StremioStreamsModal({
     return [];
   }, [activeStream, torrentStats?.audioTracks]);
 
+  const nextEpisodeNum = useMemo(() => {
+    if (mediaType !== "tv") return null;
+    const cand = Number(curEpisode) + 1;
+    if (Array.isArray(episodes) && episodes.length > 0) {
+      return episodes.some((ep) => Number(ep?.episode_number) === cand)
+        ? cand
+        : null;
+    }
+    if (maxEpisodes && cand > Number(maxEpisodes)) return null;
+    return cand;
+  }, [mediaType, curEpisode, episodes, maxEpisodes]);
+
+  const nextEpisodeMeta = useMemo(() => {
+    if (!nextEpisodeNum || !Array.isArray(episodes)) return null;
+    return (
+      episodes.find((ep) => Number(ep?.episode_number) === nextEpisodeNum) || null
+    );
+  }, [nextEpisodeNum, episodes]);
+
   // Stop background torrent session when modal unmounts
   useEffect(() => {
     return () => {
@@ -395,6 +426,53 @@ export default function StremioStreamsModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [activeStream, showSubSearch, onClose]);
 
+  const fetchCombinedStreams = async (targetS, targetE, knownImdb = null) => {
+    const resolvedImdb =
+      knownImdb || imdbId || (await fetchImdbId(mediaType, tmdbId, apiKey));
+    if (resolvedImdb && resolvedImdb !== imdbId) {
+      setImdbId(resolvedImdb);
+    }
+
+    const [builtInList, addonRes] = await Promise.all([
+      searchBuiltInTorrents({
+        mediaType,
+        imdbId: resolvedImdb,
+        title,
+        season: targetS,
+        episode: targetE,
+      }),
+      resolvedImdb && enabledAddons.length > 0
+        ? queryEnabledAddons({
+            mediaType,
+            imdbId: resolvedImdb,
+            season: mediaType === "tv" ? targetS : null,
+            episode: mediaType === "tv" ? targetE : null,
+            title,
+          })
+        : Promise.resolve({ streams: [], errors: [] }),
+    ]);
+
+    const combined = [...(addonRes.streams || []), ...(builtInList || [])];
+    const seen = new Set();
+    const unique = combined.filter((item) => {
+      const key =
+        item.directUrl || item.infoHash || item.magnetUrl || item.externalUrl;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const qRank = { "4K": 5, "1080p": 4, "720p": 3, Auto: 2, "480p": 1, CAM: 0 };
+    unique.sort((a, b) => {
+      if (a.isDirect !== b.isDirect) return a.isDirect ? -1 : 1;
+      const rDiff = (qRank[b.quality] ?? 1) - (qRank[a.quality] ?? 1);
+      if (rDiff !== 0) return rDiff;
+      return (b.seeds || 0) - (a.seeds || 0);
+    });
+
+    return { streams: unique, errors: addonRes.errors || [] };
+  };
+
   // Auto-search Built-in Indexers + Installed Stremio Addons
   useEffect(() => {
     let cancelled = false;
@@ -404,51 +482,10 @@ export default function StremioStreamsModal({
       setStreams([]);
       setErrors([]);
       try {
-        const resolvedImdb = await fetchImdbId(mediaType, tmdbId, apiKey);
+        const res = await fetchCombinedStreams(curSeason, curEpisode, null);
         if (cancelled) return;
-        setImdbId(resolvedImdb || null);
-
-        const [builtInList, addonRes] = await Promise.all([
-          searchBuiltInTorrents({
-            mediaType,
-            imdbId: resolvedImdb,
-            title,
-            season: curSeason,
-            episode: curEpisode,
-          }),
-          resolvedImdb && enabledAddons.length > 0
-            ? queryEnabledAddons({
-                mediaType,
-                imdbId: resolvedImdb,
-                season: mediaType === "tv" ? curSeason : null,
-                episode: mediaType === "tv" ? curEpisode : null,
-                title,
-              })
-            : Promise.resolve({ streams: [], errors: [] }),
-        ]);
-
-        if (cancelled) return;
-
-        const combined = [...(addonRes.streams || []), ...(builtInList || [])];
-        const seen = new Set();
-        const unique = combined.filter((item) => {
-          const key =
-            item.directUrl || item.infoHash || item.magnetUrl || item.externalUrl;
-          if (!key || seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-
-        const qRank = { "4K": 5, "1080p": 4, "720p": 3, Auto: 2, "480p": 1, CAM: 0 };
-        unique.sort((a, b) => {
-          if (a.isDirect !== b.isDirect) return a.isDirect ? -1 : 1;
-          const rDiff = (qRank[b.quality] ?? 1) - (qRank[a.quality] ?? 1);
-          if (rDiff !== 0) return rDiff;
-          return (b.seeds || 0) - (a.seeds || 0);
-        });
-
-        setStreams(unique);
-        setErrors(addonRes.errors || []);
+        setStreams(res.streams);
+        setErrors(res.errors);
       } catch (err) {
         if (!cancelled) setFatalError(err.message || "Failed to search streams");
       } finally {
@@ -570,7 +607,7 @@ export default function StremioStreamsModal({
     setActiveCueText(matches.map((m) => m.text).join("\n"));
   }, [currentTimeSec, subOffsetSec, parsedCues, selectedSubId]);
 
-  const initializePlayerForStream = (streamObj) => {
+  const initializePlayerForStream = (streamObj, { forceStartZero = false } = {}) => {
     const initialSubs = (streamObj.subtitles || []).map((s, idx) => ({
       id: `init_${idx}`,
       label: s.label || s.lang || `Subtitle ${idx + 1}`,
@@ -583,10 +620,13 @@ export default function StremioStreamsModal({
     setAudioOffsetSec(0);
     setAppliedAudioOffsetSec(0);
     setUseRemux(!!streamObj.useRemuxByDefault);
+    setNextEpCandidate(null);
+    setDismissedNextEp(false);
 
-    // Resume from savedPct if duration is already known in remux mode
+    // Resume from savedPct if duration is already known in remux mode (unless starting a fresh Binge-Watch next episode)
     const resumeBaseDur = streamObj.durationSec || effectiveFallbackDurationSec || 0;
     const initStart =
+      !forceStartZero &&
       streamObj.useRemuxByDefault &&
       resumeBaseDur > 0 &&
       savedPct > 2 &&
@@ -599,9 +639,131 @@ export default function StremioStreamsModal({
     setIsBufferingSeek(false);
     isScrubbingRef.current = false;
     setNativeDurationSec(0);
-    seekedInitialRef.current = initStart > 0;
+    seekedInitialRef.current = forceStartZero || initStart > 0;
     autoSwitchedAudioRef.current = false;
     setActiveStream(streamObj);
+  };
+
+  // Seamless in-place Binge-Watch episode switcher (preserves Fullscreen & matches release group!)
+  const playEpisodeInPlace = async (targetEp, preselectedStream = null) => {
+    if (mediaType !== "tv" || !targetEp || transitioningEpLabel) return;
+    const epTag = `S${String(curSeason).padStart(2, "0")}E${String(targetEp).padStart(2, "0")}`;
+    const carryOnlineSubLang =
+      selectedSubId !== "off" && String(selectedSubId).startsWith("online_")
+        ? subLangFilter || "id"
+        : null;
+    const prevStream = activeStream;
+
+    setTransitioningEpLabel(epTag);
+    setNextEpCandidate(null);
+    setDismissedNextEp(false);
+    setCurEpisode(targetEp);
+    onEpisodeSync?.(targetEp);
+
+    try {
+      let chosen = preselectedStream;
+      if (!chosen) {
+        const fetched = await fetchCombinedStreams(curSeason, targetEp, imdbId);
+        chosen = pickBestNextEpisodeStream(fetched.streams, prevStream);
+      }
+
+      if (!chosen) {
+        setTransitioningEpLabel(null);
+        await stopCurrentPlayback();
+        setExtMsg(`⚠ No matching stream found automatically for ${epTag}. Pick a source below.`);
+        return;
+      }
+
+      const targetEpObj = Array.isArray(episodes)
+        ? episodes.find((e) => Number(e?.episode_number) === Number(targetEp))
+        : null;
+      const targetHintDur =
+        targetEpObj?.runtime > 0
+          ? Number(targetEpObj.runtime) * 60
+          : effectiveFallbackDurationSec || 0;
+
+      let nextSessionObj = null;
+      if (chosen.isDirect) {
+        nextSessionObj = { ...chosen, durationSec: targetHintDur };
+      } else if (chosen.magnetUrl && isElectron && window.electron?.startTorrentStream) {
+        const samePack =
+          prevStream?.infoHash && chosen.infoHash === prevStream.infoHash;
+        const res = await window.electron.startTorrentStream({
+          magnet: chosen.magnetUrl,
+          fileIdx: samePack ? null : (chosen.fileIdx ?? null),
+          season: curSeason,
+          episode: targetEp,
+          hintDurationSec: targetHintDur,
+        });
+        if (!res?.ok) {
+          setTransitioningEpLabel(null);
+          await stopCurrentPlayback();
+          setExtMsg(`⚠ ${res?.error || `Could not start ${epTag}`}`);
+          return;
+        }
+        nextSessionObj = {
+          ...chosen,
+          directUrl: res.streamUrl,
+          remuxBaseUrl: res.remuxBaseUrl || null,
+          useRemuxByDefault: !!res.useRemuxByDefault,
+          durationSec: res.durationSec || targetHintDur || 0,
+          audioTracks: res.audioTracks || [],
+          subtitles: [...(res.subtitles || []), ...(chosen.subtitles || [])],
+          details: `${res.fileName} (${formatByteSize(res.fileSize)})`,
+          isTorrentSession: true,
+          isMkv: !!res.isMkv,
+        };
+      }
+
+      if (nextSessionObj) {
+        initializePlayerForStream(nextSessionObj, { forceStartZero: true });
+        setOnlineSubResults([]);
+
+        // Carry over user's preferred online subtitle language automatically if new episode has no embedded subs!
+        if (
+          carryOnlineSubLang &&
+          (!nextSessionObj.subtitles || nextSessionObj.subtitles.length === 0) &&
+          isElectron &&
+          window.electron?.searchSubtitles &&
+          window.electron?.fetchSubtitleText
+        ) {
+          (async () => {
+            try {
+              const [subdlApiKey, wyzieApiKey] = await Promise.all([
+                secureStorage.get(STORAGE_KEYS.SUBDL_API_KEY),
+                secureStorage.get(STORAGE_KEYS.WYZIE_API_KEY),
+              ]);
+              const subSearch = await window.electron.searchSubtitles({
+                tmdbId,
+                mediaType: "tv",
+                season: curSeason,
+                episode: targetEp,
+                languages: carryOnlineSubLang,
+                subdlApiKey: subdlApiKey || "",
+                wyzieApiKey: wyzieApiKey || "",
+              });
+              const topSub = subSearch?.results?.[0];
+              if (topSub) {
+                const subData = await window.electron.fetchSubtitleText({
+                  fileId: topSub.file_id,
+                  directUrl: topSub.direct_url,
+                });
+                if (subData?.ok && subData.text) {
+                  const id = `online_${topSub.file_id}`;
+                  const label = `${(topSub.language || carryOnlineSubLang).toUpperCase()} · ${topSub.release || subData.name || "Auto"}`;
+                  setAvailableSubs((prev) => [{ id, label, rawText: subData.text }, ...prev]);
+                  setSelectedSubId(id);
+                }
+              }
+            } catch {}
+          })();
+        }
+      }
+    } catch (err) {
+      setExtMsg(`⚠ ${err.message}`);
+    } finally {
+      setTransitioningEpLabel(null);
+    }
   };
 
   const handleStartMagnetStream = async (stream, openInExternalPlayer = false) => {
@@ -830,8 +992,46 @@ export default function StremioStreamsModal({
     const pct = Math.min(100, Math.round((actualSec / dur) * 100));
     onSaveProgress?.(activeProgressKey, pct);
     const threshold = Number(storage.get(STORAGE_KEYS.WATCHED_THRESHOLD) ?? 20);
-    if (dur - actualSec <= threshold) {
+    const remainingSec = dur - actualSec;
+    if (remainingSec <= threshold) {
       onMarkWatched?.(activeProgressKey);
+    }
+
+    // Binge-Watch Mode: pre-fetch next episode stream at 65s left, auto-play at 1.2s left
+    if (
+      mediaType === "tv" &&
+      autoNextEp &&
+      nextEpisodeNum &&
+      !transitioningEpLabel &&
+      dur >= 90
+    ) {
+      const pfKey = `${curSeason}_${nextEpisodeNum}`;
+      if (remainingSec <= 65 && remainingSec > 1 && prefetchedKeyRef.current !== pfKey) {
+        prefetchedKeyRef.current = pfKey;
+        fetchCombinedStreams(curSeason, nextEpisodeNum, imdbId)
+          .then((res) => {
+            const best = pickBestNextEpisodeStream(res.streams, activeStream);
+            if (best) {
+              setNextEpCandidate({
+                episode: nextEpisodeNum,
+                stream: best,
+                epTitle: nextEpisodeMeta?.name || "",
+              });
+            }
+          })
+          .catch(() => {});
+      }
+
+      if (
+        remainingSec <= 1.2 &&
+        !dismissedNextEp &&
+        nextEpCandidate?.stream &&
+        autoTriggeredKeyRef.current !== pfKey
+      ) {
+        autoTriggeredKeyRef.current = pfKey;
+        onMarkWatched?.(activeProgressKey);
+        playEpisodeInPlace(nextEpisodeNum, nextEpCandidate.stream);
+      }
     }
   };
 
@@ -936,7 +1136,7 @@ export default function StremioStreamsModal({
             </div>
             <div style={{ fontSize: 12, color: "var(--text3)", marginTop: 2 }}>
               {activeStream
-                ? `${activeStream.addonName} · ${useRemux ? "🔊 FFmpeg Stereo AAC Active" : "Direct Stream"}`
+                ? `${mediaType === "tv" ? `S${String(curSeason).padStart(2, "0")}E${String(curEpisode).padStart(2, "0")} · ` : ""}${activeStream.addonName} · ${useRemux ? "🔊 FFmpeg Stereo AAC Active" : "Direct Stream"}`
                 : `Auto Blu-Ray Finder + ${enabledAddons.length} Active Addon${enabledAddons.length === 1 ? "" : "s"}`}
             </div>
           </div>
@@ -1174,6 +1374,7 @@ export default function StremioStreamsModal({
             {/* Swarm Telemetry + Audio Mode Bar */}
             <div
               style={{
+                flexShrink: 0,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
@@ -1307,24 +1508,51 @@ export default function StremioStreamsModal({
                 )}
               </div>
 
-              {activeStream.isTorrentSession && (
-                <label
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    color: "var(--text3)",
-                    cursor: "pointer",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={keepTorrentFiles}
-                    onChange={(e) => setKeepTorrentFiles(e.target.checked)}
-                  />
-                  Keep file on close
-                </label>
-              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                {mediaType === "tv" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !autoNextEp;
+                      setAutoNextEp(next);
+                      storage.set("torrentAutoNext", next);
+                    }}
+                    style={{
+                      height: 24,
+                      padding: "0 9px",
+                      borderRadius: 99,
+                      border: `1px solid ${autoNextEp ? "rgba(72,199,116,0.45)" : "var(--border)"}`,
+                      background: autoNextEp ? "rgba(72,199,116,0.14)" : "var(--surface)",
+                      color: autoNextEp ? "#48c774" : "var(--text3)",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                    title="Binge-Watch Mode: automatically pre-fetch and play the next episode with matching release group & quality"
+                  >
+                    ⏭ Auto-Next: {autoNextEp ? "ON" : "OFF"}
+                  </button>
+                )}
+
+                {activeStream.isTorrentSession && (
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      color: "var(--text3)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={keepTorrentFiles}
+                      onChange={(e) => setKeepTorrentFiles(e.target.checked)}
+                    />
+                    Keep file on close
+                  </label>
+                )}
+              </div>
             </div>
 
             {/* Video Stage + Custom Subtitle Overlay + Custom Scrubber */}
@@ -1333,6 +1561,7 @@ export default function StremioStreamsModal({
               onMouseMove={revealFsControls}
               onPointerDown={revealFsControls}
               style={{
+                flexShrink: 0,
                 background: "#000",
                 borderRadius: isFullscreen ? 0 : 10,
                 overflow: "hidden",
@@ -1356,7 +1585,13 @@ export default function StremioStreamsModal({
                         flex: 1,
                         minHeight: 0,
                       }
-                    : { position: "relative", width: "100%", aspectRatio: "16 / 9" }
+                    : {
+                        position: "relative",
+                        width: "100%",
+                        aspectRatio: "16 / 9",
+                        maxHeight: "min(52vh, 520px)",
+                        margin: "0 auto",
+                      }
                 }
               >
                 <video
@@ -1377,6 +1612,25 @@ export default function StremioStreamsModal({
                     setIsPaused(true);
                     setFsControlsVisible(true);
                   }}
+                  onEnded={() => {
+                    if (
+                      mediaType === "tv" &&
+                      autoNextEp &&
+                      nextEpisodeNum &&
+                      !dismissedNextEp &&
+                      !transitioningEpLabel
+                    ) {
+                      const pfKey = `${curSeason}_${nextEpisodeNum}`;
+                      if (autoTriggeredKeyRef.current !== pfKey) {
+                        autoTriggeredKeyRef.current = pfKey;
+                        onMarkWatched?.(activeProgressKey);
+                        playEpisodeInPlace(
+                          nextEpisodeNum,
+                          nextEpCandidate?.stream || null,
+                        );
+                      }
+                    }
+                  }}
                   onTimeUpdate={handleTimeUpdate}
                   onError={() =>
                     setPlayerError(
@@ -1395,7 +1649,7 @@ export default function StremioStreamsModal({
                   }}
                 />
 
-                {isBufferingSeek && (
+                {isBufferingSeek && !transitioningEpLabel && (
                   <div
                     style={{
                       position: "absolute",
@@ -1414,6 +1668,154 @@ export default function StremioStreamsModal({
                     ⏳ Buffering target scene…
                   </div>
                 )}
+
+                {transitioningEpLabel && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      background: "rgba(0, 0, 0, 0.72)",
+                      backdropFilter: "blur(4px)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      zIndex: 19,
+                    }}
+                  >
+                    <div
+                      style={{
+                        padding: "12px 20px",
+                        borderRadius: 12,
+                        background: "rgba(20, 20, 26, 0.95)",
+                        border: "1px solid rgba(229, 9, 20, 0.45)",
+                        color: "#fff",
+                        fontSize: 13.5,
+                        fontWeight: 600,
+                        boxShadow: "0 14px 40px rgba(0,0,0,0.65)",
+                      }}
+                    >
+                      ⏭ Loading {transitioningEpLabel} (matching release & audio)…
+                    </div>
+                  </div>
+                )}
+
+                {/* Binge-Watch Up Next Floating Card (works in both Normal & Fullscreen!) */}
+                {mediaType === "tv" &&
+                  autoNextEp &&
+                  !dismissedNextEp &&
+                  !transitioningEpLabel &&
+                  nextEpCandidate?.stream &&
+                  totalDurationSec >= 90 &&
+                  totalDurationSec - currentTimeSec <= 38 &&
+                  totalDurationSec - currentTimeSec > 0 && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        right: 14,
+                        bottom: isFullscreen
+                          ? fsControlsVisible || isPaused
+                            ? 86
+                            : 24
+                          : 14,
+                        transition: "bottom 0.2s ease",
+                        width: 286,
+                        maxWidth: "calc(100% - 28px)",
+                        background: "rgba(16, 16, 22, 0.94)",
+                        backdropFilter: "blur(10px)",
+                        border: "1px solid rgba(229, 9, 20, 0.45)",
+                        borderRadius: 10,
+                        padding: "10px 12px",
+                        boxShadow: "0 14px 36px rgba(0, 0, 0, 0.75)",
+                        zIndex: 18,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 6,
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 11.5,
+                            fontWeight: 700,
+                            color: "#ff5c66",
+                          }}
+                        >
+                          ⏭ Up Next · S{String(curSeason).padStart(2, "0")}E
+                          {String(nextEpCandidate.episode).padStart(2, "0")}
+                          {totalDurationSec - currentTimeSec <= 15
+                            ? ` in ${Math.max(1, Math.ceil(totalDurationSec - currentTimeSec))}s`
+                            : ""}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setDismissedNextEp(true)}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: "var(--text3)",
+                            cursor: "pointer",
+                            fontSize: 12,
+                            padding: "0 4px",
+                          }}
+                          title="Cancel auto-next for this episode"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      {nextEpCandidate.epTitle && (
+                        <div
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: "#fff",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {nextEpCandidate.epTitle}
+                        </div>
+                      )}
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "var(--text3)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {nextEpCandidate.stream.quality} ·{" "}
+                        {nextEpCandidate.stream.addonName}
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        style={{
+                          height: 28,
+                          fontSize: 11.5,
+                          justifyContent: "center",
+                          marginTop: 2,
+                        }}
+                        onClick={() => {
+                          onMarkWatched?.(activeProgressKey);
+                          playEpisodeInPlace(
+                            nextEpCandidate.episode,
+                            nextEpCandidate.stream,
+                          );
+                        }}
+                      >
+                        ▶ Play Next Episode Now
+                      </button>
+                    </div>
+                  )}
 
                 {/* Crisp Custom Subtitle Overlay */}
                 {activeCueText && selectedSubId !== "off" && (
@@ -1597,6 +1999,39 @@ export default function StremioStreamsModal({
                       +10s
                     </button>
 
+                    {mediaType === "tv" && curEpisode > 1 && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        disabled={!!transitioningEpLabel}
+                        style={{ height: 28, padding: "0 8px", fontSize: 11.5 }}
+                        onClick={() => playEpisodeInPlace(curEpisode - 1, null)}
+                        title={`Previous Episode (S${String(curSeason).padStart(2, "0")}E${String(curEpisode - 1).padStart(2, "0")})`}
+                      >
+                        ⏮ Prev
+                      </button>
+                    )}
+
+                    {mediaType === "tv" && nextEpisodeNum && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        disabled={!!transitioningEpLabel}
+                        style={{ height: 28, padding: "0 8px", fontSize: 11.5 }}
+                        onClick={() =>
+                          playEpisodeInPlace(
+                            nextEpisodeNum,
+                            nextEpCandidate?.episode === nextEpisodeNum
+                              ? nextEpCandidate.stream
+                              : null,
+                          )
+                        }
+                        title={`Next Episode (S${String(curSeason).padStart(2, "0")}E${String(nextEpisodeNum).padStart(2, "0")})`}
+                      >
+                        ⏭ Next
+                      </button>
+                    )}
+
                     {/* Volume */}
                     <button
                       type="button"
@@ -1671,13 +2106,14 @@ export default function StremioStreamsModal({
               </div>
             </div>
 
-            {/* Complete Subtitle Control Strip */}
+            {/* Complete Subtitle Control Strip (compact 1-line layout — never clips player buttons!) */}
             <div
               style={{
+                flexShrink: 0,
                 background: "var(--surface2)",
                 border: "1px solid var(--border)",
                 borderRadius: 9,
-                padding: "9px 12px",
+                padding: "8px 12px",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
@@ -1689,49 +2125,28 @@ export default function StremioStreamsModal({
                 <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text2)" }}>
                   <SubtitlesIcon /> Subtitles:
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedSubId("off")}
+                <select
+                  value={selectedSubId}
+                  onChange={(e) => setSelectedSubId(e.target.value)}
                   style={{
-                    height: 26,
-                    padding: "0 9px",
+                    height: 28,
+                    padding: "0 8px",
                     borderRadius: 6,
-                    border: `1px solid ${selectedSubId === "off" ? "var(--red)" : "var(--border)"}`,
-                    background:
-                      selectedSubId === "off" ? "rgba(229,9,20,0.16)" : "var(--surface)",
+                    border: `1px solid ${selectedSubId !== "off" ? "var(--red)" : "var(--border)"}`,
+                    background: "var(--surface)",
                     color: "#fff",
                     fontSize: 11.5,
+                    maxWidth: 230,
                     cursor: "pointer",
                   }}
                 >
-                  Off
-                </button>
-                {availableSubs.map((sub) => (
-                  <button
-                    key={sub.id}
-                    type="button"
-                    onClick={() => setSelectedSubId(sub.id)}
-                    style={{
-                      height: 26,
-                      padding: "0 9px",
-                      borderRadius: 6,
-                      border: `1px solid ${selectedSubId === sub.id ? "var(--red)" : "var(--border)"}`,
-                      background:
-                        selectedSubId === sub.id
-                          ? "rgba(229,9,20,0.16)"
-                          : "var(--surface)",
-                      color: "#fff",
-                      fontSize: 11.5,
-                      cursor: "pointer",
-                      maxWidth: 190,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {sub.label}
-                  </button>
-                ))}
+                  <option value="off">Off (No Subtitle)</option>
+                  {availableSubs.map((sub) => (
+                    <option key={sub.id} value={sub.id}>
+                      {sub.label}
+                    </option>
+                  ))}
+                </select>
 
                 {isElectron && (
                   <>
@@ -1827,6 +2242,7 @@ export default function StremioStreamsModal({
             {showSubSearch && (
               <div
                 style={{
+                  flexShrink: 0,
                   background: "var(--surface2)",
                   border: "1px solid var(--border)",
                   borderRadius: 10,

@@ -7,6 +7,8 @@ import {
   buildStremioStreamUrl,
   normalizeAddonStreams,
   extractStreamSeeds,
+  extractReleaseGroupTag,
+  pickBestNextEpisodeStream,
   FEATURED_COMMUNITY_ADDONS,
 } from "../stremio.js";
 import {
@@ -226,4 +228,45 @@ Input #0, matroska,webm, from 'http://127.0.0.1:55000/video/ep01.mkv':
     buildRemuxAudioFilter(120, -0.4),
     "aresample=async=1,atrim=start=0.400,asetpts=PTS-STARTPTS",
   );
+
+  assert.equal(
+    extractReleaseGroupTag({ details: "[SubsPlease] Frieren - 01 (1080p).mkv" }),
+    "subsplease",
+  );
+  assert.equal(
+    extractReleaseGroupTag({ details: "Fallout.2024.S01E01.1080p.WEB.H264-FLUX" }),
+    "flux",
+  );
+
+  const chosen = pickBestNextEpisodeStream(
+    [
+      {
+        id: "a",
+        addonName: "Built-in · AnimeTosho",
+        details: "[Erai-raws] Frieren - 02 [4K].mkv",
+        quality: "4K",
+        seeds: 90,
+        isDirect: false,
+        magnetUrl: "magnet:?xt=urn:btih:aaaa",
+      },
+      {
+        id: "b",
+        addonName: "Built-in · AnimeTosho",
+        details: "[SubsPlease] Frieren - 02 (1080p).mkv",
+        quality: "1080p",
+        seeds: 140,
+        isDirect: false,
+        magnetUrl: "magnet:?xt=urn:btih:bbbb",
+      },
+    ],
+    {
+      id: "prev",
+      addonName: "Built-in · AnimeTosho",
+      details: "[SubsPlease] Frieren - 01 (1080p).mkv",
+      quality: "1080p",
+      isDirect: false,
+      magnetUrl: "magnet:?xt=urn:btih:0000",
+    },
+  );
+  assert.equal(chosen.id, "b");
 });
