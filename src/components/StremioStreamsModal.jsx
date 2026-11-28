@@ -120,8 +120,9 @@ export default function StremioStreamsModal({
   const [copiedId, setCopiedId] = useState(null);
   const [extMsg, setExtMsg] = useState(null);
 
-  // Audio Remux & Timeline state (fixes silent AC3/EAC3/DTS 5.1 torrents!)
+  // Audio & Universal Video Remux state (VLC-style libavcodec + GPU NVENC/QSV/AMF!)
   const [useRemux, setUseRemux] = useState(false);
+  const [useVideoTranscode, setUseVideoTranscode] = useState(false);
   const [audioTrackIdx, setAudioTrackIdx] = useState(0);
   const [audioOffsetSec, setAudioOffsetSec] = useState(0);
   const [appliedAudioOffsetSec, setAppliedAudioOffsetSec] = useState(0);
@@ -171,6 +172,7 @@ export default function StremioStreamsModal({
   const hlsRef = useRef(null);
   const seekedInitialRef = useRef(false);
   const autoSwitchedAudioRef = useRef(false);
+  const autoSwitchedVideoRef = useRef(false);
   const isScrubbingRef = useRef(false);
   const seekDebounceRef = useRef(null);
   const audioSyncTimerRef = useRef(null);
@@ -366,7 +368,7 @@ export default function StremioStreamsModal({
       } catch {}
     }
     if (
-      activeStream?.isTorrentSession &&
+      (activeStream?.isTorrentSession || activeStream?.isDirectRemuxSession) &&
       isElectron &&
       window.electron?.stopTorrentStream
     ) {
@@ -507,17 +509,25 @@ export default function StremioStreamsModal({
     addonsVersion,
   ]);
 
-  // Compute effective playback URL (Remux Stereo AAC vs Raw Direct)
+  // Compute effective playback URL (Universal GPU Video + Stereo AAC Remux vs Raw Direct)
   const effectivePlayUrl = useMemo(() => {
     if (!activeStream) return null;
     if (useRemux && activeStream.remuxBaseUrl) {
       const delayParam = appliedAudioOffsetSec
         ? `&adelay=${appliedAudioOffsetSec}`
         : "";
-      return `${activeStream.remuxBaseUrl}?start=${Math.floor(remuxStartSec)}&audio=${audioTrackIdx}${delayParam}`;
+      const vTransParam = useVideoTranscode ? "&vtranscode=1" : "";
+      return `${activeStream.remuxBaseUrl}?start=${Math.floor(remuxStartSec)}&audio=${audioTrackIdx}${delayParam}${vTransParam}`;
     }
     return activeStream.directUrl;
-  }, [activeStream, useRemux, remuxStartSec, audioTrackIdx, appliedAudioOffsetSec]);
+  }, [
+    activeStream,
+    useRemux,
+    useVideoTranscode,
+    remuxStartSec,
+    audioTrackIdx,
+    appliedAudioOffsetSec,
+  ]);
 
   // Load media into <video> / hls.js whenever `effectivePlayUrl` changes
   useEffect(() => {
@@ -620,6 +630,7 @@ export default function StremioStreamsModal({
     setAudioOffsetSec(0);
     setAppliedAudioOffsetSec(0);
     setUseRemux(!!streamObj.useRemuxByDefault);
+    setUseVideoTranscode(!!streamObj.useVideoTranscodeByDefault);
     setNextEpCandidate(null);
     setDismissedNextEp(false);
 
@@ -641,7 +652,75 @@ export default function StremioStreamsModal({
     setNativeDurationSec(0);
     seekedInitialRef.current = forceStartZero || initStart > 0;
     autoSwitchedAudioRef.current = false;
+    autoSwitchedVideoRef.current = !!streamObj.useVideoTranscodeByDefault;
     setActiveStream(streamObj);
+  };
+
+  // VLC-style automatic fallback: activates FFmpeg libavcodec + GPU H.264 transcoding when <video> rejects 10-bit HEVC/DV/MKV!
+  const activateUniversalVideoFallback = async (resumeSec = 0) => {
+    if (!activeStream || autoSwitchedVideoRef.current) {
+      setPlayerError(
+        "Stream URL is offline, expired, or not a valid video file. Please try another stream source.",
+      );
+      return;
+    }
+    autoSwitchedVideoRef.current = true;
+    setPlayerError(null);
+    setIsBufferingSeek(true);
+
+    if (activeStream.remuxBaseUrl) {
+      setRemuxStartSec(Math.floor(resumeSec));
+      setUseRemux(true);
+      setUseVideoTranscode(true);
+      return;
+    }
+
+    if (isElectron && window.electron?.startDirectRemux && activeStream.directUrl) {
+      try {
+        const res = await window.electron.startDirectRemux({
+          url: activeStream.directUrl,
+          headers: activeStream.streamHeaders || {},
+          hintDurationSec: totalDurationSec || effectiveFallbackDurationSec || 0,
+        });
+        if (!res?.ok || !res.remuxBaseUrl) {
+          setIsBufferingSeek(false);
+          setPlayerError(
+            res?.error ||
+              "Stream URL is offline, expired, or requires addon configuration.",
+          );
+          return;
+        }
+        if (Array.isArray(res.subtitles) && res.subtitles.length > 0) {
+          const extraSubs = res.subtitles.map((s, idx) => ({
+            id: `direct_sub_${idx}`,
+            label: s.label || s.lang || `Embedded ${idx + 1}`,
+            url: s.url,
+          }));
+          setAvailableSubs((prev) => [...prev, ...extraSubs]);
+        }
+        setActiveStream((prev) =>
+          prev
+            ? {
+                ...prev,
+                remuxBaseUrl: res.remuxBaseUrl,
+                videoEncoderLabel: res.videoEncoderLabel || "GPU",
+                durationSec: res.durationSec || prev.durationSec || 0,
+                audioTracks: res.audioTracks || prev.audioTracks || [],
+                isDirectRemuxSession: true,
+              }
+            : prev,
+        );
+        setRemuxStartSec(Math.floor(resumeSec));
+        setUseRemux(true);
+        setUseVideoTranscode(true);
+        return;
+      } catch {}
+    }
+
+    setIsBufferingSeek(false);
+    setPlayerError(
+      "Stream URL is unreachable or unsupported. Try picking another source.",
+    );
   };
 
   // Seamless in-place Binge-Watch episode switcher (preserves Fullscreen & matches release group!)
@@ -706,6 +785,8 @@ export default function StremioStreamsModal({
           directUrl: res.streamUrl,
           remuxBaseUrl: res.remuxBaseUrl || null,
           useRemuxByDefault: !!res.useRemuxByDefault,
+          useVideoTranscodeByDefault: !!res.useVideoTranscodeByDefault,
+          videoEncoderLabel: res.videoEncoderLabel || "GPU",
           durationSec: res.durationSec || targetHintDur || 0,
           audioTracks: res.audioTracks || [],
           subtitles: [...(res.subtitles || []), ...(chosen.subtitles || [])],
@@ -791,6 +872,8 @@ export default function StremioStreamsModal({
         directUrl: res.streamUrl,
         remuxBaseUrl: res.remuxBaseUrl || null,
         useRemuxByDefault: !!res.useRemuxByDefault,
+        useVideoTranscodeByDefault: !!res.useVideoTranscodeByDefault,
+        videoEncoderLabel: res.videoEncoderLabel || "GPU",
         durationSec: res.durationSec || 0,
         audioTracks: res.audioTracks || [],
         subtitles: [...(res.subtitles || []), ...(stream.subtitles || [])],
@@ -954,6 +1037,19 @@ export default function StremioStreamsModal({
 
     // Do not snap timeline backward while user is dragging slider or waiting on debounced remux seek
     if (isScrubbingRef.current || seekDebounceRef.current) {
+      return;
+    }
+
+    // Automatic black-screen HEVC/DolbyVision fallback: if audio advances >2.2s with 0x0 decoded video dimensions, switch to GPU Universal Decoder!
+    if (
+      !useVideoTranscode &&
+      !autoSwitchedVideoRef.current &&
+      v.currentTime > 2.2 &&
+      v.videoWidth === 0
+    ) {
+      activateUniversalVideoFallback(
+        (useRemux ? remuxStartSec : 0) + (v.currentTime || 0),
+      );
       return;
     }
 
@@ -1407,6 +1503,35 @@ export default function StremioStreamsModal({
                     type="button"
                     onClick={() => {
                       setRemuxStartSec(Math.floor(currentTimeSec));
+                      const next = !useVideoTranscode;
+                      if (next) setUseRemux(true);
+                      setUseVideoTranscode(next);
+                    }}
+                    style={{
+                      height: 24,
+                      padding: "0 9px",
+                      borderRadius: 99,
+                      border: `1px solid ${useVideoTranscode ? "rgba(72,199,116,0.45)" : "var(--border)"}`,
+                      background: useVideoTranscode
+                        ? "rgba(72,199,116,0.14)"
+                        : "var(--surface)",
+                      color: useVideoTranscode ? "#48c774" : "var(--text3)",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                    title="VLC-style Universal Video Decoder (decodes 10-bit HEVC / Dolby Vision / MKV via FFmpeg + GPU hardware encoder)"
+                  >
+                    🎬 Video Fix ({activeStream.videoEncoderLabel || "GPU"}):{" "}
+                    {useVideoTranscode ? "ON" : "AUTO"}
+                  </button>
+                )}
+
+                {activeStream.remuxBaseUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRemuxStartSec(Math.floor(currentTimeSec));
                       setUseRemux((v) => !v);
                     }}
                     style={{
@@ -1633,9 +1758,7 @@ export default function StremioStreamsModal({
                   }}
                   onTimeUpdate={handleTimeUpdate}
                   onError={() =>
-                    setPlayerError(
-                      "Video codec requires hardware external player (e.g. 10-bit HEVC without Windows HEVC extension). Click 'Open in MPV / VLC' below.",
-                    )
+                    activateUniversalVideoFallback(currentTimeRef.current || 0)
                   }
                   style={{
                     width: "100%",

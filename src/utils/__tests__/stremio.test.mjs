@@ -6,6 +6,7 @@ import {
   validateStremioManifest,
   buildStremioStreamUrl,
   normalizeAddonStreams,
+  isPlaceholderNoticeStream,
   extractStreamSeeds,
   extractReleaseGroupTag,
   pickBestNextEpisodeStream,
@@ -279,4 +280,32 @@ Input #0, matroska,webm, from 'http://127.0.0.1:55000/video/ep01.mkv':
   assert.equal(typeof loadTurboTorrentStream(), "function");
   const trList = mergeMagnetTrackers("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567");
   assert.ok(trList.some((t) => t.startsWith("https://")));
+
+  // Verify placeholder notice filter strips Jackettio "Kindly configure" dummy stream
+  assert.equal(
+    isPlaceholderNoticeStream({
+      name: "Jackettio | ElfHosted",
+      title: "ℹ Kindly configure this addon to access streams.",
+    }),
+    true,
+  );
+  const cleanedStreams = normalizeAddonStreams(
+    [
+      {
+        name: "Jackettio | ElfHosted",
+        title: "ℹ Kindly configure this addon to access streams.",
+        url: "https://jackettio.elfhosted.com/playback/dummy",
+      },
+    ],
+    "Jackettio",
+  );
+  assert.equal(cleanedStreams.length, 0);
+
+  // Verify Dolby Vision / legacy codec triggers needsVideoTranscodeByDefault
+  const dvProbe = parseFfmpegProbeOutput(`
+  Duration: 01:55:00.00, start: 0.000000
+  Stream #0:0: Video: hevc (dvhe / 0x65687664), yuv420p10le, 3840x2160
+`);
+  assert.equal(dvProbe.needsVideoTranscodeByDefault, true);
+  assert.equal(dvProbe.hasMediaStreams, true);
 });

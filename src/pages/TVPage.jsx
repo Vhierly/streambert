@@ -88,6 +88,7 @@ import {
 import { useSourceId } from "../utils/useSourceId";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 import HiAnimeLoader from "../components/HiAnimeLoader";
+import NativeHlsPlayer from "../components/NativeHlsPlayer";
 
 // ── Partial-circle progress icon (cached per pct tier) ───────────────────────
 // Uses a single SVG arc. Three instances (25/50/75)
@@ -448,6 +449,10 @@ export default function TVPage({
   const [showAddonsModal, setShowAddonsModal] = useState(false);
   const credits = useCredits("tv", item.id, apiKey);
   const [m3u8Url, setM3u8Url] = useState(null);
+  const [nativeHls, setNativeHls] = useState(false);
+  useEffect(() => {
+    if (!m3u8Url) setNativeHls(false);
+  }, [m3u8Url]);
   const [interceptedSubs, setInterceptedSubs] = useState([]);
   const [playerSource, setPlayerSource] = useState(
     () => storage.get("playerSource") || NON_ANIME_DEFAULT_SOURCE,
@@ -2238,6 +2243,20 @@ export default function TVPage({
                     </div>
                   </div>
                 )}
+                {nativeHls && m3u8Url && !pipOpen && (
+                  <NativeHlsPlayer
+                    m3u8Url={m3u8Url}
+                    subtitles={interceptedSubs}
+                    initialPct={
+                      progress?.[
+                        `tv_${item.id}_s${selectedSeason}e${selectedEp?.episode_number || 1}`
+                      ] || 0
+                    }
+                    progressKey={`tv_${item.id}_s${selectedSeason}e${selectedEp?.episode_number || 1}`}
+                    onSaveProgress={saveProgress}
+                    onExit={() => setNativeHls(false)}
+                  />
+                )}
                 <webview
                   ref={webviewRef}
                   // A fresh guest per UA mode: loadURL's userAgent override sticks
@@ -2251,7 +2270,7 @@ export default function TVPage({
                       : undefined
                   }
                   src={
-                    pipOpen
+                    pipOpen || nativeHls
                       ? "about:blank"
                       : isAsync
                         ? resolvedPlayerUrl || "about:blank"
@@ -2359,6 +2378,16 @@ export default function TVPage({
                   >
                     <PopOutIcon />
                   </button>
+                  {m3u8Url && !nativeHls && !pipOpen && (
+                    <button
+                      className="player-overlay-btn"
+                      onClick={() => setNativeHls(true)}
+                      title="Play captured HLS stream in ad-free native player"
+                      style={{ color: "#4ade80" }}
+                    >
+                      ⚡ Ad-Free
+                    </button>
+                  )}
                 </div>
                 {showSourceMenu && menuPos && (
                   <div

@@ -77,6 +77,7 @@ import { useSourceId } from "../utils/useSourceId";
 import { useSourceHealth, getHealthIndicator } from "../utils/sourceHealth";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 import HiAnimeLoader from "../components/HiAnimeLoader";
+import NativeHlsPlayer from "../components/NativeHlsPlayer";
 
 export default function MoviePage({
   item,
@@ -107,6 +108,10 @@ export default function MoviePage({
   const credits = useCredits("movie", item.id, apiKey);
 
   const [m3u8Url, setM3u8Url] = useState(null);
+  const [nativeHls, setNativeHls] = useState(false);
+  useEffect(() => {
+    if (!m3u8Url) setNativeHls(false);
+  }, [m3u8Url]);
   const [interceptedSubs, setInterceptedSubs] = useState([]);
   const [playerSource, setPlayerSource] = useState(
     () => storage.get("playerSource") || NON_ANIME_DEFAULT_SOURCE,
@@ -1124,6 +1129,16 @@ export default function MoviePage({
                 </button>
               </div>
             )}
+            {nativeHls && m3u8Url && !pipOpen && (
+              <NativeHlsPlayer
+                m3u8Url={m3u8Url}
+                subtitles={interceptedSubs}
+                initialPct={displayPct}
+                progressKey={progressKey}
+                onSaveProgress={saveProgress}
+                onExit={() => setNativeHls(false)}
+              />
+            )}
             <webview
               ref={webviewRef}
               // A fresh guest per UA mode: loadURL's userAgent override sticks
@@ -1133,7 +1148,7 @@ export default function MoviePage({
                 sourceUsesCleanUa(playerSource) ? CLEAN_USER_AGENT : undefined
               }
               src={
-                pipOpen
+                pipOpen || nativeHls
                   ? "about:blank"
                   : sourceIsAsync(playerSource)
                     ? resolvedPlayerUrl || "about:blank"
@@ -1237,6 +1252,16 @@ export default function MoviePage({
               >
                 <PopOutIcon />
               </button>
+              {m3u8Url && !nativeHls && !pipOpen && (
+                <button
+                  className="player-overlay-btn"
+                  onClick={() => setNativeHls(true)}
+                  title="Play captured HLS stream in ad-free native player"
+                  style={{ color: "#4ade80" }}
+                >
+                  ⚡ Ad-Free
+                </button>
+              )}
             </div>
             {showSourceMenu && menuPos && (
               <div

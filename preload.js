@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("electron", {
     return h;
   },
   offM3u8Found: (h) => ipcRenderer.removeListener("m3u8-found", h),
+  setNativeHlsStream: (url) => ipcRenderer.invoke("set-native-hls-stream", url),
 
   // subtitle capture (.vtt / .srt), cb receives { url, lang }
   onSubtitleFound: (cb) => {
@@ -228,9 +229,11 @@ contextBridge.exposeInMainWorld("electron", {
   discordRpcUpdateActivity: (activity) =>
     ipcRenderer.invoke("discord-rpc-update-activity", activity),
 
-  // Instant Sequential Torrent Streamer
+  // Instant Sequential Torrent Streamer & Universal FFmpeg Remuxer
   startTorrentStream: (opts) =>
     ipcRenderer.invoke("start-torrent-stream", opts),
+  startDirectRemux: (opts) =>
+    ipcRenderer.invoke("start-direct-remux", opts),
   getTorrentStatus: () => ipcRenderer.invoke("get-torrent-status"),
   stopTorrentStream: (opts) => ipcRenderer.invoke("stop-torrent-stream", opts),
 });

@@ -164,6 +164,7 @@ const BROWSER_SAFE_AUDIO = new Set(["aac", "mp3", "vorbis", "opus"]);
 const TEXT_SUB_CODECS = new Set(["subrip", "srt", "ass", "ssa", "webvtt", "mov_text"]);
 
 let cachedFfmpegBin = undefined;
+let cachedBestH264Encoder = undefined;
 
 function resolveFfmpegPath() {
   if (cachedFfmpegBin !== undefined) return cachedFfmpegBin;
@@ -196,6 +197,115 @@ function resolveFfmpegPath() {
 }
 
 /**
+ * Auto-detect the fastest working hardware H.264 encoder on this machine (VLC-style
+ * libavcodec decode + NVENC / AMD AMF / Intel QSV hardware encode, with CPU fallback).
+ */
+function detectBestH264Encoder(ffmpegBin) {
+  if (cachedBestH264Encoder !== undefined) return cachedBestH264Encoder;
+  const cpuFallback = {
+    id: "libx264",
+    label: "CPU Ultrafast",
+    isHardware: false,
+    args: [
+      "-vf",
+      "scale='min(1920,iw)':-2:flags=fast_bilinear,format=yuv420p",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "ultrafast",
+      "-tune",
+      "zerolatency",
+      "-crf",
+      "22",
+    ],
+  };
+  if (!ffmpegBin) {
+    cachedBestH264Encoder = cpuFallback;
+    return cachedBestH264Encoder;
+  }
+
+  const hwCandidates = [
+    {
+      id: "h264_nvenc",
+      label: "NVIDIA NVENC GPU",
+      isHardware: true,
+      probeArgs: ["-c:v", "h264_nvenc", "-preset", "p1", "-pix_fmt", "yuv420p"],
+      args: [
+        "-vf",
+        "format=yuv420p",
+        "-c:v",
+        "h264_nvenc",
+        "-preset",
+        "p2",
+        "-rc",
+        "vbr",
+        "-cq",
+        "22",
+      ],
+    },
+    {
+      id: "h264_qsv",
+      label: "Intel QSV GPU",
+      isHardware: true,
+      probeArgs: ["-c:v", "h264_qsv", "-preset", "veryfast", "-pix_fmt", "yuv420p"],
+      args: [
+        "-vf",
+        "format=yuv420p",
+        "-c:v",
+        "h264_qsv",
+        "-preset",
+        "veryfast",
+        "-global_quality",
+        "22",
+      ],
+    },
+    {
+      id: "h264_amf",
+      label: "AMD AMF GPU",
+      isHardware: true,
+      probeArgs: ["-c:v", "h264_amf", "-quality", "speed", "-pix_fmt", "yuv420p"],
+      args: ["-vf", "format=yuv420p", "-c:v", "h264_amf", "-quality", "speed"],
+    },
+  ];
+
+  for (const cand of hwCandidates) {
+    try {
+      const r = spawnSync(
+        ffmpegBin,
+        [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-f",
+          "lavfi",
+          "-i",
+          "color=c=black:s=256x256:r=25:d=0.1",
+          "-frames:v",
+          "1",
+          ...cand.probeArgs,
+          "-f",
+          "null",
+          "-",
+        ],
+        { timeout: 2200, encoding: "utf8" },
+      );
+      if (r.status === 0) {
+        cachedBestH264Encoder = {
+          id: cand.id,
+          label: cand.label,
+          isHardware: true,
+          args: cand.args,
+        };
+        return cachedBestH264Encoder;
+      }
+    } catch {}
+  }
+
+  cachedBestH264Encoder = cpuFallback;
+  return cachedBestH264Encoder;
+}
+
+/**
  * Parse `ffmpeg -i` stderr output into duration, video codec, audio tracks, and text subtitle tracks.
  */
 function parseFfmpegProbeOutput(stderrText) {
@@ -221,12 +331,23 @@ function parseFfmpegProbeOutput(stderrText) {
   }
 
   let videoCodec = "h264";
-  const vidMatch = /Stream #0:\d+(?:\[[^\]]+\])?(?:\([^)]*\))?:\s*Video:\s*([a-zA-Z0-9_]+)/.exec(
+  let videoDetailLine = "";
+  const vidMatch = /Stream #0:\d+(?:\[[^\]]+\])?(?:\([^)]*\))?:\s*Video:\s*([a-zA-Z0-9_]+)([^\r\n]*)/.exec(
     text,
   );
   if (vidMatch) {
     videoCodec = vidMatch[1].toLowerCase();
+    videoDetailLine = vidMatch[2] || "";
   }
+  const isDolbyVision = /\b(dvhe|dvh1|dolby vision)\b/i.test(
+    `${videoCodec} ${videoDetailLine}`,
+  );
+  const needsVideoTranscodeByDefault =
+    isDolbyVision ||
+    (videoCodec !== "h264" &&
+      videoCodec !== "hevc" &&
+      videoCodec !== "vp9" &&
+      videoCodec !== "av1");
 
   const audioTracks = [];
   const audioRegex =
@@ -270,15 +391,34 @@ function parseFfmpegProbeOutput(stderrText) {
     sIdx++;
   }
 
-  return { durationSec, videoCodec, audioTracks, embeddedSubs };
+  return {
+    durationSec,
+    videoCodec,
+    hasMediaStreams: Boolean(vidMatch || audioTracks.length > 0),
+    needsVideoTranscodeByDefault,
+    audioTracks,
+    embeddedSubs,
+  };
 }
 
-function probeMediaViaFfmpeg(rawUrl, ffmpegBin) {
+function buildFfmpegHeadersArg(headers = {}) {
+  if (!headers || typeof headers !== "object") return "";
+  const lines = [];
+  if (headers.referer) lines.push(`Referer: ${String(headers.referer).replace(/[\r\n]/g, "")}`);
+  if (headers.origin) lines.push(`Origin: ${String(headers.origin).replace(/[\r\n]/g, "")}`);
+  if (headers.userAgent) {
+    lines.push(`User-Agent: ${String(headers.userAgent).replace(/[\r\n]/g, "")}`);
+  }
+  return lines.length > 0 ? `${lines.join("\r\n")}\r\n` : "";
+}
+
+function probeMediaViaFfmpeg(rawUrl, ffmpegBin, headers = {}) {
   return new Promise((resolve) => {
     if (!ffmpegBin) {
       resolve({
         durationSec: 0,
         videoCodec: "h264",
+        needsVideoTranscodeByDefault: false,
         audioTracks: [],
         embeddedSubs: [],
       });
@@ -287,23 +427,22 @@ function probeMediaViaFfmpeg(rawUrl, ffmpegBin) {
 
     let stderr = "";
     let done = false;
-    const proc = spawn(
-      ffmpegBin,
-      [
-        "-hide_banner",
-        "-seekable",
-        "1",
-        "-multiple_requests",
-        "1",
-        "-analyzeduration",
-        "5000000",
-        "-probesize",
-        "5000000",
-        "-i",
-        rawUrl,
-      ],
-      { stdio: ["ignore", "ignore", "pipe"] },
-    );
+    const headerArg = buildFfmpegHeadersArg(headers);
+    const probeArgs = [
+      "-hide_banner",
+      ...(headerArg ? ["-headers", headerArg] : []),
+      "-seekable",
+      "1",
+      "-multiple_requests",
+      "1",
+      "-analyzeduration",
+      "5000000",
+      "-probesize",
+      "5000000",
+      "-i",
+      rawUrl,
+    ];
+    const proc = spawn(ffmpegBin, probeArgs, { stdio: ["ignore", "ignore", "pipe"] });
 
     const timer = setTimeout(() => {
       if (!done) {
@@ -424,6 +563,113 @@ function buildRemuxAudioFilter(startSec = 0, audioOffsetSec = 0) {
     filters.push(`atrim=start=${trimSec}`, "asetpts=PTS-STARTPTS");
   }
   return filters.join(",");
+}
+
+function serveLiveFfmpegRemux({ reqUrl, req, res, sessionState, ffmpegBin, onSeekSec }) {
+  killActiveRemuxProcess(sessionState);
+
+  const startSec = Math.max(0, Number(reqUrl.searchParams.get("start") || 0));
+  const audioIdx = Math.max(0, Number(reqUrl.searchParams.get("audio") || 0));
+  const audioOffsetSec = Math.max(
+    -15,
+    Math.min(15, Number(reqUrl.searchParams.get("adelay") || 0) || 0),
+  );
+  const vCodec = sessionState.probe?.videoCodec || "h264";
+  const forceVideoTranscode =
+    reqUrl.searchParams.get("vtranscode") === "1" ||
+    Boolean(sessionState.probe?.needsVideoTranscodeByDefault);
+
+  if (typeof onSeekSec === "function") {
+    onSeekSec(startSec);
+  }
+
+  const headerArg = buildFfmpegHeadersArg(sessionState.sourceHeaders);
+  const args = ["-hide_banner", "-loglevel", "error"];
+
+  if (forceVideoTranscode) {
+    // VLC-style Universal Decoder: hardware-accelerated decode + NVENC/QSV/AMF/CPU H.264 encode
+    args.push("-hwaccel", "auto");
+    if (startSec > 0) {
+      args.push("-ss", String(startSec));
+    }
+  } else if (startSec > 0) {
+    // Stream-copy mode: snap decoded audio to the exact video keyframe
+    args.push("-noaccurate_seek", "-ss", String(startSec));
+  }
+
+  if (headerArg) {
+    args.push("-headers", headerArg);
+  }
+
+  args.push(
+    "-seekable",
+    "1",
+    "-multiple_requests",
+    "1",
+    "-i",
+    sessionState.streamUrl,
+    "-map",
+    "0:v:0",
+    "-map",
+    `0:a:${audioIdx}?`,
+  );
+
+  if (forceVideoTranscode) {
+    const bestEnc = detectBestH264Encoder(ffmpegBin);
+    args.push(...bestEnc.args);
+  } else if (vCodec === "hevc") {
+    args.push("-c:v", "copy", "-tag:v", "hvc1");
+  } else if (vCodec === "h264" || vCodec === "vp9" || vCodec === "av1") {
+    args.push("-c:v", "copy");
+  } else {
+    const bestEnc = detectBestH264Encoder(ffmpegBin);
+    args.push(...bestEnc.args);
+  }
+
+  args.push(
+    "-c:a",
+    "aac",
+    "-ac",
+    "2",
+    "-b:a",
+    "192k",
+    "-af",
+    buildRemuxAudioFilter(startSec, audioOffsetSec),
+    "-avoid_negative_ts",
+    "make_zero",
+    "-movflags",
+    "frag_keyframe+empty_moov+default_base_moof",
+    "-f",
+    "mp4",
+    "pipe:1",
+  );
+
+  res.writeHead(200, {
+    "Content-Type": "video/mp4",
+    "Cache-Control": "no-store",
+    Connection: "keep-alive",
+  });
+
+  const proc = spawn(ffmpegBin, args, {
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  sessionState.remuxProc = proc;
+
+  req.on("close", () => {
+    if (sessionState.remuxProc === proc) {
+      sessionState.remuxProc = null;
+    }
+    try {
+      proc.kill("SIGKILL");
+    } catch {}
+  });
+
+  proc.stdout.pipe(res);
+  proc.on("error", () => {
+    try {
+      res.end();
+    } catch {}
+  });
 }
 
 function killActiveRemuxProcess(session) {
@@ -850,100 +1096,28 @@ function startTorrentSession({
           return;
         }
 
-        // 3. Live FFmpeg Audio-to-AAC Remux endpoint: /remux?start=0&audio=0
+        // 3. Live FFmpeg Audio+Video Universal Remux endpoint: /remux?start=0&audio=0&vtranscode=0|1
         if (reqUrl.pathname === "/remux" && ffmpegBin) {
-          killActiveRemuxProcess(sessionState);
-
-          const startSec = Math.max(0, Number(reqUrl.searchParams.get("start") || 0));
-          const audioIdx = Math.max(0, Number(reqUrl.searchParams.get("audio") || 0));
-          const audioOffsetSec = Math.max(
-            -15,
-            Math.min(15, Number(reqUrl.searchParams.get("adelay") || 0) || 0),
-          );
-          const vCodec = sessionState.probe?.videoCodec || "h264";
           const knownDur =
             sessionState.probe?.durationSec || sessionState.hintDurationSec || 0;
-
-          if (startSec > 0 && knownDur > 0) {
-            const ratio = Math.min(0.98, Math.max(0, startSec / knownDur));
-            prioritizeByteWindow(
-              sessionState,
-              Math.floor(ratio * target.length),
-              true,
-            );
-          } else if (startSec === 0) {
-            prioritizeByteWindow(sessionState, 0, true);
-          }
-
-          const args = ["-hide_banner", "-loglevel", "error"];
-          if (startSec > 0) {
-            // Keep decoded audio aligned to the exact video keyframe selected by -c:v copy
-            args.push("-noaccurate_seek", "-ss", String(startSec));
-          }
-          args.push(
-            "-seekable",
-            "1",
-            "-multiple_requests",
-            "1",
-            "-i",
-            sessionState.streamUrl,
-            "-map",
-            "0:v:0",
-            "-map",
-            `0:a:${audioIdx}?`,
-          );
-
-          if (vCodec === "hevc") {
-            args.push("-c:v", "copy", "-tag:v", "hvc1");
-          } else if (vCodec === "h264" || vCodec === "vp9" || vCodec === "av1") {
-            args.push("-c:v", "copy");
-          } else {
-            args.push("-c:v", "libx264", "-preset", "ultrafast", "-crf", "22");
-          }
-
-          args.push(
-            "-c:a",
-            "aac",
-            "-ac",
-            "2",
-            "-b:a",
-            "192k",
-            "-af",
-            buildRemuxAudioFilter(startSec, audioOffsetSec),
-            "-avoid_negative_ts",
-            "make_zero",
-            "-movflags",
-            "frag_keyframe+empty_moov+default_base_moof",
-            "-f",
-            "mp4",
-            "pipe:1",
-          );
-
-          res.writeHead(200, {
-            "Content-Type": "video/mp4",
-            "Cache-Control": "no-store",
-            Connection: "keep-alive",
-          });
-
-          const proc = spawn(ffmpegBin, args, {
-            stdio: ["ignore", "pipe", "ignore"],
-          });
-          sessionState.remuxProc = proc;
-
-          req.on("close", () => {
-            if (sessionState.remuxProc === proc) {
-              sessionState.remuxProc = null;
-            }
-            try {
-              proc.kill("SIGKILL");
-            } catch {}
-          });
-
-          proc.stdout.pipe(res);
-          proc.on("error", () => {
-            try {
-              res.end();
-            } catch {}
+          serveLiveFfmpegRemux({
+            reqUrl,
+            req,
+            res,
+            sessionState,
+            ffmpegBin,
+            onSeekSec: (startSec) => {
+              if (startSec > 0 && knownDur > 0) {
+                const ratio = Math.min(0.98, Math.max(0, startSec / knownDur));
+                prioritizeByteWindow(
+                  sessionState,
+                  Math.floor(ratio * target.length),
+                  true,
+                );
+              } else if (startSec === 0) {
+                prioritizeByteWindow(sessionState, 0, true);
+              }
+            },
           });
           return;
         }
@@ -1106,14 +1280,19 @@ function startTorrentSession({
         const firstAudioNeedsRemux =
           ext === ".mkv" ||
           ext === ".avi" ||
+          Boolean(probe.needsVideoTranscodeByDefault) ||
           probe.audioTracks.length > 1 ||
           probe.audioTracks.some((a) => a.needsRemux);
+
+        const bestEnc = detectBestH264Encoder(ffmpegBin);
 
         finish({
           ok: true,
           streamUrl,
           remuxBaseUrl,
           useRemuxByDefault: !!(remuxBaseUrl && firstAudioNeedsRemux),
+          useVideoTranscodeByDefault: Boolean(probe.needsVideoTranscodeByDefault),
+          videoEncoderLabel: bestEnc.label,
           durationSec: probe.durationSec || sessionState.hintDurationSec || 0,
           audioTracks: probe.audioTracks || [],
           fileName: target.name,
@@ -1121,6 +1300,143 @@ function startTorrentSession({
           isMkv: ext === ".mkv" || ext === ".avi",
           subtitles: [...folderSubs, ...mkvSubs],
         });
+      });
+    });
+  });
+}
+
+/**
+ * Create a VLC-style Universal FFmpeg Remux session for any Direct HTTP/HTTPS stream
+ * whose video/audio codec (e.g. 10-bit HEVC, Dolby Vision, MKV, EAC3) was rejected by <video>.
+ */
+function startDirectRemuxSession({ url, headers = {}, hintDurationSec = 0 } = {}) {
+  return new Promise(async (resolve) => {
+    if (!url || typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+      resolve({ ok: false, error: "Invalid HTTP stream URL" });
+      return;
+    }
+    const ffmpegBin = resolveFfmpegPath();
+    if (!ffmpegBin) {
+      resolve({ ok: false, error: "FFmpeg binary unavailable" });
+      return;
+    }
+
+    await stopActiveSession({ keepFiles: false });
+
+    const sessionState = {
+      engine: null,
+      server: null,
+      tmpDir: null,
+      target: null,
+      stopped: false,
+      reprobeTimer: null,
+      hintDurationSec: Math.max(0, Number(hintDurationSec) || 0),
+      sourceHeaders: headers || {},
+      streamUrl: url,
+      remuxBaseUrl: "",
+      remuxProc: null,
+      probe: {
+        durationSec: 0,
+        videoCodec: "hevc",
+        needsVideoTranscodeByDefault: true,
+        audioTracks: [],
+        embeddedSubs: [],
+      },
+      mkvSubCache: new Map(),
+    };
+
+    const server = http.createServer((req, res) => {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      const reqUrl = new URL(req.url || "/", "http://127.0.0.1");
+
+      const mkvSubMatch = /^\/mkvsub\/(\d+)\.vtt$/i.exec(reqUrl.pathname);
+      if (mkvSubMatch) {
+        const streamIndex = Number(mkvSubMatch[1]);
+        if (sessionState.mkvSubCache.has(streamIndex)) {
+          res.writeHead(200, { "Content-Type": "text/vtt; charset=utf-8" });
+          res.end(sessionState.mkvSubCache.get(streamIndex));
+          return;
+        }
+        const headerArg = buildFfmpegHeadersArg(sessionState.sourceHeaders);
+        const chunks = [];
+        const proc = spawn(
+          ffmpegBin,
+          [
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            ...(headerArg ? ["-headers", headerArg] : []),
+            "-i",
+            sessionState.streamUrl,
+            "-map",
+            `0:${streamIndex}`,
+            "-f",
+            "webvtt",
+            "pipe:1",
+          ],
+          { stdio: ["ignore", "pipe", "ignore"] },
+        );
+        req.on("close", () => {
+          if (!res.writableEnded) {
+            try {
+              proc.kill("SIGKILL");
+            } catch {}
+          }
+        });
+        proc.stdout.on("data", (c) => chunks.push(c));
+        proc.on("close", (code) => {
+          const out = Buffer.concat(chunks).toString("utf8");
+          if (code === 0 && out.includes("WEBVTT")) {
+            sessionState.mkvSubCache.set(streamIndex, out);
+          }
+          if (!res.headersSent) {
+            res.writeHead(out ? 200 : 500, { "Content-Type": "text/vtt; charset=utf-8" });
+          }
+          res.end(out || "WEBVTT\n\n");
+        });
+        return;
+      }
+
+      if (reqUrl.pathname === "/remux") {
+        serveLiveFfmpegRemux({ reqUrl, req, res, sessionState, ffmpegBin });
+        return;
+      }
+
+      res.writeHead(404);
+      res.end();
+    });
+
+    server.listen(0, "127.0.0.1", async () => {
+      const port = server.address().port;
+      const remuxBaseUrl = `http://127.0.0.1:${port}/remux`;
+      sessionState.server = server;
+      sessionState.remuxBaseUrl = remuxBaseUrl;
+      activeSession = sessionState;
+
+      const probe = await probeMediaViaFfmpeg(url, ffmpegBin, headers);
+      if (!probe.hasMediaStreams && !probe.durationSec) {
+        await stopActiveSession({ keepFiles: false });
+        resolve({ ok: false, error: "Stream source is unreachable or not a valid media file" });
+        return;
+      }
+      sessionState.probe = { ...probe, needsVideoTranscodeByDefault: true };
+
+      const mkvSubs = (probe.embeddedSubs || []).map((es) => ({
+        url: `http://127.0.0.1:${port}/mkvsub/${es.streamIndex}.vtt`,
+        lang: es.lang,
+        label: es.label,
+      }));
+      const bestEnc = detectBestH264Encoder(ffmpegBin);
+
+      resolve({
+        ok: true,
+        remuxBaseUrl,
+        useRemuxByDefault: true,
+        useVideoTranscodeByDefault: true,
+        videoEncoderLabel: bestEnc.label,
+        durationSec: probe.durationSec || sessionState.hintDurationSec || 0,
+        audioTracks: probe.audioTracks || [],
+        subtitles: mkvSubs,
       });
     });
   });
@@ -1159,6 +1475,10 @@ function register() {
     startTorrentSession(opts),
   );
 
+  ipcMain.handle("start-direct-remux", async (_, opts = {}) =>
+    startDirectRemuxSession(opts),
+  );
+
   ipcMain.handle("get-torrent-status", () => getActiveStatus());
 
   ipcMain.handle("stop-torrent-stream", async (_, opts = {}) => {
@@ -1176,5 +1496,6 @@ module.exports = {
   buildRemuxAudioFilter,
   parseCompactPeers,
   loadTurboTorrentStream,
+  detectBestH264Encoder,
   resolveFfmpegPath,
 };

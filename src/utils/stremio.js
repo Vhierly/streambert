@@ -198,13 +198,24 @@ export function pickBestNextEpisodeStream(candidates = [], previousStream = null
 }
 
 /**
+ * Detect non-playable placeholder notice items returned by unconfigured Debrid addons
+ * (e.g. Jackettio's "ℹ Kindly configure this addon to access streams.").
+ */
+export function isPlaceholderNoticeStream(stream) {
+  const hay = `${stream?.title || ""} ${stream?.description || ""} ${stream?.name || ""}`;
+  return /\b(kindly configure|please configure|configure this addon|configuration required|invalid debrid|debrid required|expired debrid)\b/i.test(
+    hay,
+  );
+}
+
+/**
  * Normalize raw streams returned by an addon into UI-ready items.
  */
 export function normalizeAddonStreams(rawStreams = [], addonName = "Addon", fallbackTitle = "") {
   if (!Array.isArray(rawStreams)) return [];
   return rawStreams
     .map((s, idx) => {
-      if (!s || typeof s !== "object") return null;
+      if (!s || typeof s !== "object" || isPlaceholderNoticeStream(s)) return null;
       const directUrl =
         typeof s.url === "string" && /^https?:\/\//i.test(s.url) ? s.url : null;
       const externalUrl =

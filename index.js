@@ -39,12 +39,16 @@ if (process.env.STREAMBERT_LOW_RAM === "1") {
     "--max-old-space-size=256 --expose-gc",
   );
   console.log("STREAMBERT_LOW_RAM mode on");
-  // Run the network stack in the browser process → one less utility process
-  app.commandLine.appendSwitch("enable-features", "NetworkServiceInProcess2");
+  // Run the network stack in the browser process + unlock native GPU HEVC decoding
+  app.commandLine.appendSwitch(
+    "enable-features",
+    "NetworkServiceInProcess2,PlatformHEVCDecoderSupport",
+  );
   // Cap disk cache and limit renderer processes
   app.commandLine.appendSwitch("disk-cache-size", String(80 * 1024 * 1024));
   app.commandLine.appendSwitch("renderer-process-limit", "3");
 } else {
+  app.commandLine.appendSwitch("enable-features", "PlatformHEVCDecoderSupport");
   console.log("STREAMBERT_LOW_RAM mode off");
 }
 
@@ -55,6 +59,7 @@ const _bench = (label) =>
 
 // -- Sub-modules ---------------------------------------------------------------
 const blockStats = require("./src/ipc/blockStats");
+const adblock = require("./src/ipc/adblock");
 const siteTweaks = require("./src/ipc/siteTweaks");
 const storageIpc = require("./src/ipc/storage");
 const downloadsIpc = require("./src/ipc/downloads");
@@ -301,6 +306,7 @@ const getMainWindow = () => mainWindow;
 
 const playerWcIds = new Set();
 let sessionsConfigured = false;
+let activeNativeHls = null;
 
 // Returns the default Chromium user agent without Electron/app identifiers.
 function buildCleanUserAgent() {
@@ -360,6 +366,29 @@ function installPopupHandler(wc) {
       }, 5000);
     } catch {}
   });
+  wc.on("will-navigate", (event, url) => {
+    const decision = adblock.shouldBlockNavigation(wc.getURL(), url);
+    if (decision.block) {
+      event.preventDefault();
+      blockStats.recordBlockedRequest(url);
+    }
+  });
+  wc.on("will-frame-navigate", (details) => {
+    if (details.isMainFrame) return;
+    let currentUrl = "";
+    try {
+      currentUrl = wc.getURL();
+    } catch {}
+    const decision = adblock.shouldBlockRequest({
+      url: details.url,
+      resourceType: "subFrame",
+      webContentsUrl: currentUrl,
+    });
+    if (decision.block) {
+      details.preventDefault();
+      blockStats.recordBlockedRequest(details.url);
+    }
+  });
 }
 
 // Sets the YouTube consent cookie (suppresses the consent gate) in a session.
@@ -415,54 +444,52 @@ function setupSession(playerSession, trailerSession) {
     stripHeaders,
   );
 
+  adblock.init(BLOCKED_HOSTS);
+  adblock.refreshBlocklistIfStale();
+
   // Trailer: block ads only (no media intercept needed)
   trailerSession.webRequest.onBeforeRequest({ urls: BLOCKED_HOSTS }, (_, cb) =>
     cb({ cancel: true }),
   );
 
   // Player session: block ads + intercept m3u8/vtt URLs for renderer
-  const MEDIA_URLS = [
-    "*://*/*.m3u8*",
-    "*://*/*.m3u8",
-    "*://*/*.vtt*",
-    "*://*/*.vtt",
-  ];
   playerSession.webRequest.onBeforeRequest(
-    { urls: [...BLOCKED_HOSTS, ...MEDIA_URLS] },
+    { urls: ["*://*/*"] },
     (details, callback) => {
       const { url } = details;
-      const isMedia = url.includes(".m3u8") || url.includes(".vtt");
-      if (!isMedia) {
+      let pageUrl = details.referrer || "";
+      if (!pageUrl) {
+        try {
+          pageUrl = details.webContents?.getURL() || details.frame?.url || "";
+        } catch {}
+      }
+      const decision = adblock.shouldBlockRequest({
+        url,
+        resourceType: details.resourceType,
+        referrer: details.referrer || pageUrl,
+        webContentsUrl: pageUrl,
+      });
+      if (decision.block) {
         blockStats.recordBlockedRequest(url);
         callback({ cancel: true });
         return;
       }
-      // Media URL: check if it also happens to be on a blocked domain
-      try {
-        const host = new URL(url).hostname;
-        const blocked = BLOCKED_HOSTS.some((pat) => {
-          const hostPat = pat.replace(/^\*:\/\//, "").split("/")[0];
-          return hostPat.startsWith("*.")
-            ? host.endsWith(hostPat.slice(1))
-            : host === hostPat || host === hostPat.replace(/^\*\./, "");
-        });
-        if (blocked) {
-          blockStats.recordBlockedRequest(url);
-          callback({ cancel: true });
-          return;
-        }
-      } catch {}
-      // Pass through + notify renderer
-      const mw = getMainWindow();
-      if (mw && !mw.isDestroyed()) {
-        if (url.includes(".m3u8")) {
-          mw.webContents.send("m3u8-found", url);
-        } else if (url.includes(".vtt")) {
-          const { extractSubtitleLang } = require("./src/ipc/subtitles");
-          mw.webContents.send("subtitle-found", {
-            url,
-            lang: extractSubtitleLang(url),
-          });
+
+      // Pass through + notify renderer for captured streams & subtitles
+      const isM3u8 = /\.m3u8(\?|$)/i.test(url) || url.includes(".m3u8");
+      const isVtt = /\.vtt(\?|$)/i.test(url) || url.includes(".vtt");
+      if (isM3u8 || isVtt) {
+        const mw = getMainWindow();
+        if (mw && !mw.isDestroyed()) {
+          if (isM3u8) {
+            mw.webContents.send("m3u8-found", url);
+          } else if (isVtt) {
+            const { extractSubtitleLang } = require("./src/ipc/subtitles");
+            mw.webContents.send("subtitle-found", {
+              url,
+              lang: extractSubtitleLang(url),
+            });
+          }
         }
       }
       callback({});
@@ -537,15 +564,70 @@ function createWindow() {
     },
   });
 
-  // Force long-lived disk caching for TMDB images in the default session.
+  // Merged defaultSession response handler: TMDB 7-day image caching + CORS
+  // headers for active native HLS playback in the renderer.
   session.defaultSession.webRequest.onHeadersReceived(
-    { urls: ["*://image.tmdb.org/*"] },
+    { urls: ["*://*/*"] },
     (details, callback) => {
-      const headers = { ...details.responseHeaders };
-      headers["cache-control"] = ["public, max-age=604800, immutable"]; // 7 days
-      delete headers["pragma"];
-      delete headers["expires"];
-      callback({ responseHeaders: headers });
+      if (details.url.includes("://image.tmdb.org/")) {
+        const headers = { ...details.responseHeaders };
+        headers["cache-control"] = ["public, max-age=604800, immutable"]; // 7 days
+        delete headers["pragma"];
+        delete headers["expires"];
+        callback({ responseHeaders: headers });
+        return;
+      }
+      if (activeNativeHls && adblock.isNativeHlsTarget(details.url, activeNativeHls)) {
+        const headers = {};
+        for (const [k, v] of Object.entries(details.responseHeaders || {})) {
+          const lower = k.toLowerCase();
+          if (
+            lower === "access-control-allow-origin" ||
+            lower === "access-control-allow-headers" ||
+            lower === "access-control-expose-headers"
+          ) {
+            continue;
+          }
+          headers[k] = v;
+        }
+        headers["access-control-allow-origin"] = ["*"];
+        headers["access-control-allow-headers"] = ["*"];
+        headers["access-control-expose-headers"] = ["*"];
+        callback({ responseHeaders: headers });
+        return;
+      }
+      callback({});
+    },
+  );
+
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ["*://*/*"] },
+    (details, callback) => {
+      if (!activeNativeHls || !adblock.isNativeHlsTarget(details.url, activeNativeHls)) {
+        callback({});
+        return;
+      }
+      const meta = activeNativeHls.meta || {};
+      if (!meta.referer && !meta.origin && !meta.userAgent) {
+        callback({});
+        return;
+      }
+      const headers = {};
+      for (const [k, v] of Object.entries(details.requestHeaders || {})) {
+        const lower = k.toLowerCase();
+        if (
+          (meta.referer && lower === "referer") ||
+          (meta.origin && lower === "origin") ||
+          (meta.userAgent && lower === "user-agent")
+        ) {
+          continue;
+        }
+        headers[k] = v;
+      }
+      if (meta.referer) headers["Referer"] = meta.referer;
+      if (meta.origin) headers["Origin"] = meta.origin;
+      if (meta.userAgent) headers["User-Agent"] = meta.userAgent;
+      callback({ requestHeaders: headers });
     },
   );
 
@@ -648,11 +730,35 @@ torrentStreamer.register();
 // get-block-stats lives with its data
 ipcMain.handle("get-block-stats", () => blockStats.getBlockStats());
 
+ipcMain.handle("set-native-hls-stream", (_e, url) => {
+  if (!url || typeof url !== "string") {
+    activeNativeHls = null;
+    return { ok: true };
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      activeNativeHls = null;
+      return { ok: false };
+    }
+    const host = parsed.hostname.toLowerCase().replace(/\.+$/, "");
+    const parts = host.split(".");
+    const rootHost = parts.length >= 2 ? parts.slice(-2).join(".") : host;
+    const meta = playerIpc.getStreamMeta(url) || {};
+    activeNativeHls = { url, host, rootHost, meta };
+    return { ok: true, hasMeta: Boolean(meta.referer || meta.origin) };
+  } catch {
+    activeNativeHls = null;
+    return { ok: false };
+  }
+});
+
 // -- Player memory cleanup ---------------------------------------------
 // Called by MoviePage / TVPage on component unmount.
 // Mutes the tracked player webview WebContents and triggers GC hints.
 // The <webview> teardown itself is left to Electron (no manual destroy).
 ipcMain.on("player-stopped", () => {
+  activeNativeHls = null;
   // Step 1: Only mute the tracked player WebContents. They must NOT be destroyed
   // manually with wc.destroy(): the <webview> element removal in the renderer
   // already tears the guest down cleanly.
