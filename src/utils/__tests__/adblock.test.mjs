@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { scoreM3u8Url, pickPreferredM3u8 } from "../hlsPick.js";
 
 const require = createRequire(import.meta.url);
 const adblock = require("../../ipc/adblock.js");
@@ -168,4 +169,21 @@ test("isNativeHlsTarget scopes CORS/header injection to active HLS hosts and med
   assert.equal(adblock.isNativeHlsTarget("http://127.0.0.1:8080/chunk", active), false);
   assert.equal(adblock.isNativeHlsTarget("https://example.com/page.html", active), false);
   assert.equal(adblock.isNativeHlsTarget("https://edge1.vidfastcdn.net/master.m3u8", null), false);
+});
+
+test("pickPreferredM3u8 protects master playlist from audio/video child playlists", () => {
+  const master = "https://cdn.example.com/hls/master.m3u8";
+  const video1080 = "https://cdn.example.com/hls/1080p/index.m3u8";
+  const chunklist = "https://cdn.example.com/hls/chunklist_b2500000.m3u8";
+  const audioOnly = "https://cdn.example.com/hls/audio_en/prog.m3u8";
+  const subOnly = "https://cdn.example.com/hls/sub_id.m3u8";
+
+  assert.ok(scoreM3u8Url(master) > scoreM3u8Url(video1080));
+  assert.equal(pickPreferredM3u8(master, video1080), master);
+  assert.equal(pickPreferredM3u8(master, chunklist), master);
+  assert.equal(pickPreferredM3u8(master, audioOnly), master);
+  assert.equal(pickPreferredM3u8(master, subOnly), master);
+
+  // If a variant arrived first, later master upgrades cleanly
+  assert.equal(pickPreferredM3u8(video1080, master), master);
 });

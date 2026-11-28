@@ -503,7 +503,7 @@ function setupSession(playerSession, trailerSession) {
   // per URL, so live playlists that are re-requested every few seconds add
   // no latency or repeated work.
   playerSession.webRequest.onBeforeSendHeaders(
-    { urls: ["*://*/*.m3u8*", "*://*/*.m3u8"] },
+    { urls: ["*://*/*.m3u8*", "*://*/*.m3u8", "*://*/*.vtt*", "*://*/*.vtt"] },
     (details, callback) => {
       callback({ requestHeaders: details.requestHeaders });
       try {

@@ -78,6 +78,7 @@ import { useSourceHealth, getHealthIndicator } from "../utils/sourceHealth";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 import HiAnimeLoader from "../components/HiAnimeLoader";
 import NativeHlsPlayer from "../components/NativeHlsPlayer";
+import { pickPreferredM3u8 } from "../utils/hlsPick";
 
 export default function MoviePage({
   item,
@@ -477,7 +478,7 @@ export default function MoviePage({
   useEffect(() => {
     if (!window.electron) return;
     const handler = window.electron.onM3u8Found((url) => {
-      setM3u8Url((prev) => (prev !== url ? url : prev));
+      setM3u8Url((prev) => pickPreferredM3u8(prev, url));
     });
     return () => window.electron.offM3u8Found(handler);
   }, []);
@@ -1137,6 +1138,9 @@ export default function MoviePage({
                 progressKey={progressKey}
                 onSaveProgress={saveProgress}
                 onExit={() => setNativeHls(false)}
+                title={title}
+                tmdbId={item.id}
+                mediaType="movie"
               />
             )}
             <webview

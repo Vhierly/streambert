@@ -89,6 +89,7 @@ import { useSourceId } from "../utils/useSourceId";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 import HiAnimeLoader from "../components/HiAnimeLoader";
 import NativeHlsPlayer from "../components/NativeHlsPlayer";
+import { pickPreferredM3u8 } from "../utils/hlsPick";
 
 // ── Partial-circle progress icon (cached per pct tier) ───────────────────────
 // Uses a single SVG arc. Three instances (25/50/75)
@@ -879,7 +880,7 @@ export default function TVPage({
   useEffect(() => {
     if (!window.electron) return;
     const handler = window.electron.onM3u8Found((url) => {
-      setM3u8Url((prev) => (prev !== url ? url : prev));
+      setM3u8Url((prev) => pickPreferredM3u8(prev, url));
     });
     return () => window.electron.offM3u8Found(handler);
   }, []);
@@ -2255,6 +2256,11 @@ export default function TVPage({
                     progressKey={`tv_${item.id}_s${selectedSeason}e${selectedEp?.episode_number || 1}`}
                     onSaveProgress={saveProgress}
                     onExit={() => setNativeHls(false)}
+                    title={`${title} · S${selectedSeason}E${selectedEp?.episode_number || 1}`}
+                    tmdbId={item.id}
+                    mediaType="tv"
+                    season={selectedSeason}
+                    episode={selectedEp?.episode_number || 1}
                   />
                 )}
                 <webview
